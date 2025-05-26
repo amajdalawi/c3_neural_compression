@@ -81,6 +81,7 @@ def soft_round_inverse(x, temperature):
   Returns:
     Array of same shape as `x`.
   """
+  jax.debug.print("is this ever called? soft_round_inverse")
   if temperature is None:
     temperature = jnp.inf
 
@@ -109,6 +110,8 @@ def soft_round_conditional_mean(x, temperature):
   Returns:
     Array of same shape as `x`.
   """
+
+  jax.debug.print("is this ever called? soft_round_conditional_mean")
   return soft_round_inverse(x - 0.5, temperature) + 0.5
 
 
@@ -158,6 +161,7 @@ class Latent(hk.Module):
         can be a float or a tuple of length equal to the length of `input_size`.
     """
     super().__init__()
+    jax.debug.print("[CALLING FROM latents.py] Latents initialized using __init__ from Latent class")
     self.input_res = input_res
     self.num_grids = num_grids
     self.add_gains = add_gains
@@ -224,6 +228,7 @@ class Latent(hk.Module):
   @property
   def gains(self) -> Array:
     """Latents are multiplied by these values before quantization."""
+    jax.debug.print("gains from Latent class accessed")
     if self.add_gains:
       return self._gains
     return jnp.ones(self.num_grids)
@@ -231,6 +236,7 @@ class Latent(hk.Module):
   @property
   def latent_grids(self) -> tuple[Array, ...]:
     """Optionally add gains to latents (following COOL-CHIC paper)."""
+    jax.debug.print("latent_grids property from Latent class accessed")
     return tuple(grid * gain for grid, gain
                  in zip(self._latent_grids, self._gains))
 
@@ -265,6 +271,9 @@ class Latent(hk.Module):
     """
     # Optionally apply quantization (quantize just returns latent_grid if
     # quant_type is "none")
+    jax.debug.print("[CALLING FROM latents.py] __call_ of Latent class accessed")
+
+    print("does this work?")
     latent_grids = jax.tree_map(
         functools.partial(
             quantize,
@@ -336,21 +345,28 @@ def quantize(
   """
 
   # First map inputs to scaled space where each bin has width 1.
+  arr_original = arr
   arr = arr / q_step
   if quant_type == 'none':
+    jax.debug.print("I'm called: noise type none")
     pass
   elif quant_type == 'noise':
+    jax.debug.print("I'm called: noise type Noise")
     # Add uniform noise U(-0.5, 0.5) during training.
     arr = arr + jax.random.uniform(hk.next_rng_key(), shape=arr.shape) - 0.5
   elif quant_type == 'round':
+    jax.debug.print("I'm called: noise type Round")
     # Round at test time
     arr = jnp.round(arr)
   elif quant_type == 'ste':
+    jax.debug.print("I'm called: noise type STE")
     # Numerically correct straight through estimator. See
     # https://jax.readthedocs.io/en/latest/jax-101/04-advanced-autodiff.html#straight-through-estimator-using-stop-gradient
     zero = arr - jax.lax.stop_gradient(arr)
     arr = zero + jax.lax.stop_gradient(jnp.round(arr))
   elif quant_type == 'soft_round':
+
+    jax.debug.print("I'm called: noise type Soft round")
     if soft_round_temp is None:
       raise ValueError(
           '`soft_round_temp` must be specified if `quant_type` is `soft_round`.'
@@ -375,5 +391,12 @@ def quantize(
   else:
     raise ValueError(f'Unknown quant_type: {quant_type}')
   # Map inputs back to original range
-  arr = arr * q_step
+  arr_quantized = arr * q_step
+  quant_type_map = {'none': 0, 'noise': 1, 'round': 2, 'soft_round': 3, 'ste': 4}
+  quant_type_id = quant_type_map.get(quant_type, -1)
+
+  jax.debug.print("Quantizing latents: type_id={}", quant_type_id)
+  jax.debug.print("Quantizing latents: q_step={}", jnp.array(q_step))
+  jax.debug.print("Original arr sample: {x}", x=arr_original.flatten()[:5])
+  jax.debug.print("Quantized arr sample: {x}", x=arr_quantized.flatten()[:5])
   return arr

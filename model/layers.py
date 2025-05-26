@@ -51,7 +51,7 @@ def causal_mask(
     Mask of shape ({t}, h, w, 1, f_out) where the spatio-temporal dimensions are
     given by `kernel_shape`.
   """
-
+  jax.debug.print("[CALLING FROM layers.py] causal_mask")
   for i, k in enumerate(kernel_shape):
     assert k % 2 == 1, (
         f'Kernel shape needs to be odd in all dimensions, not {k=} in'
@@ -78,6 +78,8 @@ def central_mask(
     f_out: int,
 ) -> Array:
   """Returns a mask with `kernel_shape` where the central `mask_shape` is 1."""
+  jax.debug.print("[CALLING FROM layers.py] central_mask")
+
 
   for i, k in enumerate(kernel_shape):
     assert k % 2 == 1, (
@@ -118,6 +120,8 @@ def get_prev_current_mask(
     f_out: int,
 ) -> Array:
   """Returns mask of size `kernel_shape + (2, f_out)`."""
+  jax.debug.print("[CALLING FROM layers.py] get_prev_current_mask")
+  
   mask_current = causal_mask(kernel_shape=kernel_shape, f_out=f_out)
   mask_prev = central_mask(
       kernel_shape=kernel_shape, mask_shape=prev_kernel_shape, f_out=f_out
@@ -140,6 +144,7 @@ def init_like_linear(shape, dtype):
   Returns:
     Weights of shape ({t}, h, w, 1, f_out)
   """
+  jax.debug.print("[CALLING FROM layers.py] init_like_linear")
   *spatial_dims, f_in, f_out = shape
   spatial_dims = tuple(spatial_dims)
   assert f_in == 1, f'Input feature dimension needs to be 1 not {f_in}.'
@@ -266,6 +271,8 @@ class EfficientConv(hk.Module):
       name:
     """
     super().__init__(name=name)
+    jax.debug.print("[CALLING FROM layers.py] __init__ EfficientConv")
+    
     self.output_channels = output_channels
     self.kernel_shape_current = kernel_shape_current
     self.kernel_shape_prev = kernel_shape_prev
@@ -277,6 +284,8 @@ class EfficientConv(hk.Module):
       prev_frame_mask_top_left: tuple[int, int] | None,
       **unused_kwargs,
   ) -> Array:
+    jax.debug.print("[CALLING FROM layers.py] __call__ EfficientConv")
+    
     assert x.ndim == 4  # T, H, W, C
     inputs = jnp.concatenate([jnp.zeros_like(x[0:1]), x], axis=0)
 
@@ -324,6 +333,8 @@ class EfficientConv(hk.Module):
   def _pad_before_or_after(self, pad_size: int) -> tuple[int, int]:
     # Note that a positive `pad_size` pads to before, and negative `pad_size`
     # pads to after.
+    jax.debug.print("[CALLING FROM layers.py] _pad_before_or_after EfficientConv")
+
     if pad_size > 0:
       return (pad_size, 0)
     else:
@@ -341,6 +352,8 @@ class EfficientConv(hk.Module):
     # previous frame respectively. The sum of their outputs are returned.
     # In the case where `self.conv_prev = None`, only the output of
     # `self.conv_current` is returned.
+    jax.debug.print("[CALLING FROM layers.py] _apply EfficientConv")
+
     assert x_current.ndim == 3
     assert x_prev.ndim == 3
     h, w, _ = x_current.shape

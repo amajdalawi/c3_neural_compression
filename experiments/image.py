@@ -49,6 +49,8 @@ class Experiment(base.Experiment):
   """Per data-point compression experiment for images. Assume single-device."""
 
   def init_params(self, input_res, soft_round_temp=None, input_mean=None):
+    jax.debug.print("[CALLING FROM image.py] init_params")
+
     forward_init = jax.jit(
         self.forward.init, static_argnames=('quant_type', 'input_res')
     )
@@ -65,12 +67,15 @@ class Experiment(base.Experiment):
     return params, opt_state
 
   def _get_upsampling_fn(self, input_res):
+    jax.debug.print("[CALLING FROM image.py] _get_upsampling_fn")
+
     num_dims = len(input_res)
     assert num_dims == 2
     return super()._get_upsampling_fn(input_res)
 
   def _get_entropy_model(self):
     """Returns entropy model."""
+    jax.debug.print("[CALLING FROM image.py] _get_entropy_model")
     return entropy_models.AutoregressiveEntropyModelConvImage(
         **self.config.model.entropy,
     )
@@ -156,7 +161,8 @@ class Experiment(base.Experiment):
     Returns:
       Loss as jax array and dictionary of metrics.
     """
-
+    jax.debug.print("[CALLING FROM image.py] _loss_fn")
+    jax.debug.print("[CALLING FROM image.py] Running forward.apply")
     out = self.forward.apply(
         params=params,
         rng=rng,
@@ -165,6 +171,8 @@ class Experiment(base.Experiment):
         soft_round_temp=soft_round_temp,
         kumaraswamy_a=kumaraswamy_a,
     )
+    jax.debug.print("[CALLING FROM image.py] Finished forward.apply")
+
     pred_img, _, all_latents, loc, scale = out
     distortion = psnr_utils.mse_fn(pred_img, target)
     # Also report distortion for rounded rec, only for logging purposes.
@@ -176,9 +184,13 @@ class Experiment(base.Experiment):
     # Sum rate over all pixels. Ensure that the rate is computed in the space
     # where the bin width of the latents is 1 by passing q_step to the rate
     # function.
+    jax.debug.print("[CALLING FROM image.py] doing entropy_models.compute_rate on the latents")
+
     rate = entropy_models.compute_rate(
         all_latents, loc, scale, q_step=self.config.model.latents.q_step
     ).sum()
+    jax.debug.print("[CALLING FROM image.py] finished doing entropy_models.compute_rate on the latents")
+
     num_pixels = self._num_pixels(target.shape[:-1])  # without channel dim
     loss = distortion + rd_weight * rate / num_pixels
     metrics = {
@@ -189,6 +201,8 @@ class Experiment(base.Experiment):
         'psnr': psnr_utils.psnr_fn(distortion),
         'psnr_rounded': psnr_utils.psnr_fn(distortion_rounded),
     }
+    jax.debug.print("[CALLING FROM image.py] returning from _loss_fn")
+
     return loss, metrics
 
   # We use jit instead of pmap for simplicity, and assume that the experiment
@@ -210,6 +224,7 @@ class Experiment(base.Experiment):
       kumaraswamy_a=None,
   ):
     logging.info('`single_train_step` was recompiled.')
+    jax.debug.print("[CALLING FROM image.py] single_train_step")
     grads, metrics = jax.grad(self._loss_fn, has_aux=True)(
         params,
         target=inputs,
@@ -219,6 +234,8 @@ class Experiment(base.Experiment):
         rd_weight=rd_weight,
         kumaraswamy_a=kumaraswamy_a,
     )
+    jax.debug.print("[CALLING FROM image.py] single_train_step 2, finised calculating grad, now getting optimizer")
+    
     # Compute updates and update parameters.
     opt = self.get_opt(
         use_cosine_schedule=use_cosine_schedule,
@@ -245,7 +262,10 @@ class Experiment(base.Experiment):
           'entropy_grad_norm': entropy_grad_norm,
       }
     # Pass `params` for weight decay.
+    jax.debug.print("[CALLING FROM image.py] single_train_step 3, getting updates before applyng them")
+
     updates, opt_state = opt.update(grads, opt_state, params)
+    jax.debug.print("updating params after optimization step")
     params = optax.apply_updates(params, updates)
     return params, opt_state, metrics
 
@@ -253,6 +273,8 @@ class Experiment(base.Experiment):
   def eval(self, params, inputs, blocked_rates=False):
     # We always use rounding for quantization at test time. Note that we call
     # the function with "ste" as this is equivalent to "round" at test time.
+    jax.debug.print("[CALLING FROM image.py] eval")
+
     out = self.forward.apply(params=params, rng=None, quant_type='ste',
                              input_res=inputs.shape[:-1])
     rec, _, all_latents, loc, scale = out
@@ -266,9 +288,12 @@ class Experiment(base.Experiment):
     # Sum rate over all pixels. Ensure that the rate is computed in the space
     # where the bin width of the latents is 1 by passing q_step to the rate
     # function.
+    jax.debug.print("[CALLING FROM image.py] eval 2, computing latents rate")
     rate = entropy_models.compute_rate(
         all_latents, loc, scale, q_step=self.config.model.latents.q_step
     ).sum()
+    jax.debug.print("[CALLING FROM image.py] eval 3, finished computing latents rate")
+
     # Compute rate distortion loss
     num_pixels = self._num_pixels(inputs.shape[:-1])  # without channel dim
     loss = distortion + self.config.loss.rd_weight * rate / num_pixels
@@ -279,6 +304,8 @@ class Experiment(base.Experiment):
         'psnr': psnr_utils.psnr_fn(distortion),
         'ssim': dm_pix.ssim(rec, inputs),
     }
+    jax.debug.print("[CALLING FROM image.py] eval 4,returning from eval")
+
     return metrics
 
   def _log_train_metrics(self, i, metrics, delta_time, num_pixels,
@@ -299,6 +326,7 @@ class Experiment(base.Experiment):
   def fit_datum(self, inputs, rng):
     # Move input to the GPU (or other existing device). Otherwise it gets
     # transferred every microstep!
+    jax.debug.print("[CALLING FROM image.py] fit_datum")
     inputs = jax.device_put(inputs, jax.devices()[0])
 
     if self.config.model.synthesis.b_last_init_input_mean:
@@ -307,6 +335,8 @@ class Experiment(base.Experiment):
       chex.assert_shape(input_mean, (3,))
     else:
       input_mean = None
+
+    jax.debug.print("[CALLING FROM image.py] fit_datum 2 start of defining paramd and optstate with init_params")
     params, opt_state = self.init_params(
         input_res=inputs.shape[:-1],
         soft_round_temp=self.config.quant.soft_round_temp_start,
@@ -342,6 +372,7 @@ class Experiment(base.Experiment):
     else:
       kumaraswamy_a_fn = lambda _: None
     for i in range(self.config.opt.num_noise_steps):
+      jax.debug.print("[CALLING FROM image.py] fit_datum 3  inside num_noise_steps loop, ")
       # Split `rng` to ensure we use a different noise for noise quantization
       # at each step.
       # It is faster to split this on the CPU than outside of jit on GPU.
@@ -386,6 +417,7 @@ class Experiment(base.Experiment):
     #   quantization):
     #     * params at the end of training with "noise" quantization
     #     * best throughout training with STE quantization
+    jax.debug.print("[CALLING FROM image.py] fit_datum 4 Finished num_noise_steps, now doing god knows what")
     if self.config.opt.max_num_ste_steps > 0:
       quant_type = self.config.quant.ste_quant_type
       assert 'ste' in quant_type

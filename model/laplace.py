@@ -37,6 +37,8 @@ def log_expbig_minus_expsmall(big: Numeric, small: Numeric) -> Array:
   Returns:
     The resulting `log(exp(big) - exp(small))`.
   """
+  jax.debug.print("[CALLING FROM laplace.py] log_expbig_minus_expsmall")
+
   return big + jnp.log1p(-jnp.exp(small - big))
 
 
@@ -55,6 +57,7 @@ class Laplace(distrax.Laplace):
   def integrated_log_prob(self, x: Numeric) -> Array:
     """Returns integrated log_prob in (x - 0.5, x + 0.5)."""
     # Numerically stable implementation taken from `distrax.Quantized.log_prob`.
+    jax.debug.print("[CALLING FROM laplace.py] integrated_log_prob from class Laplace")
 
     log_cdf_big = self.log_cdf(x + 0.5)
     log_cdf_small = self.log_cdf(x - 0.5)

@@ -41,6 +41,7 @@ def jax_image_upsampling(latent_grids: tuple[Array, ...],
   """
   # First latent grid is assumed to be the largest and corresponds to the input
   # shape of the image or video ({T}, H, W).
+  jax.debug.print("upsampling now...")
   assert len(latent_grids[0].shape) == len(input_res)
   # input_size = latent_grids[0].shape
   upsampled_latents = jax.tree_map(

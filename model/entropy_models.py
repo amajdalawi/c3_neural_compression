@@ -41,6 +41,7 @@ def _clip_log_scale(
     clip_like_cool_chic: bool = True,
 ) -> Array:
   """Clips log scale to lie in `scale_range`."""
+  jax.debug.print("clip_log_scale called?")
   if clip_like_cool_chic:
     # This slightly odd clipping is based on the COOL-CHIC implementation
     # https://github.com/Orange-OpenSource/Cool-Chic/blob/16c41c033d6fd03e9f038d4f37d1ca330d5f7e35/src/models/arm.py#L158
@@ -180,6 +181,7 @@ class AutoregressiveEntropyModelConvImage(
       Tuple of parameters of Laplace distribution (loc and scale) each of shape
       (num_latents,).
     """
+    jax.debug.print("called autoregressive")
 
     assert len(latent_grids[0].shape) in (2, 3)
 

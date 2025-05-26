@@ -49,6 +49,7 @@ def _unnested_to_nested_dict(d: Mapping[str, jax.Array]) -> hk.Params:
   Returns:
     A two-level mapping of type `hk.Params`.
   """
+  jax.debug.print("[CALLING FROM model_coding.py] _unnested_to_nested_dict")
   out = collections.defaultdict(dict)
   for name, value in d.items():
     # Everything before the last `'/'` is the module_name in `haiku`.
@@ -73,6 +74,8 @@ def _unflatten_and_unmask(
       Masked out entries are set to `0.` in the unmasked array. There should be
       as many `1`s in `unflat_mask` as there are entries in `flat_masked_arr`.
   """
+  jax.debug.print("[CALLING FROM model_coding.py] _unflatten_and_unmask")
+
   chex.assert_rank(flat_masked_array, 1)
   if np.all(unflat_mask == np.ones_like(unflat_mask)):
     out = flat_masked_array
@@ -99,6 +102,8 @@ def _unflatten_and_unmask(
 
 def _mask_and_flatten(arr: Array, mask: Array) -> Array:
   """Returns masked and flattened copy of `arr`."""
+  jax.debug.print("[CALLING FROM model_coding.py] _mask_and_flatten")
+  
   if mask.dtype != bool:
     raise TypeError('`mask` needs to be boolean.')
   return arr[mask].flatten()
@@ -126,6 +131,8 @@ class QuantizableMixin(abc.ABC):
       parameter_array: Array,
   ) -> Array | None:
     """Return mask for a particular module parameter `arr`."""
+    jax.debug.print("[CALLING FROM model_coding.py] QuantizableMixin._get_mask")
+
     del dictkey  # Do not mask out anything by default.
     return np.ones(parameter_array.shape, dtype=bool)
 
@@ -142,6 +149,8 @@ class QuantizableMixin(abc.ABC):
       q_step_bias: float,
   ) -> Array:
     """Quantize `arr` into integers according to `q_step`."""
+    jax.debug.print("[CALLING FROM model_coding.py] QuantizableMixin._quantize_array_to_int")
+    
     if self._treat_as_weight(dictkey[0].key, arr.shape):
       q_step = q_step_weight
     elif self._treat_as_bias(dictkey[0].key, arr.shape):
@@ -159,6 +168,8 @@ class QuantizableMixin(abc.ABC):
       q_step_bias: float,
   ) -> Array:
     """Scale quantized integer array `arr` by the corresponding `q_step`."""
+    jax.debug.print("[CALLING FROM model_coding.py] QuantizableMixin._scale_quantized_array_by_q_step")
+    
     if self._treat_as_weight(dictkey[0].key, arr.shape):
       q_step = q_step_weight
     elif self._treat_as_bias(dictkey[0].key, arr.shape):
@@ -171,6 +182,8 @@ class QuantizableMixin(abc.ABC):
       self, q_step_weight: float, q_step_bias: float
   ) -> hk.Params:
     """Returnes quantized but rescaled float parameters (nested `hk.Params`)."""
+    jax.debug.print("[CALLING FROM model_coding.py] QuantizableMixin.get_quantized_nested_params")
+    
     quantized_params_int = jax.tree_util.tree_map_with_path(
         functools.partial(
             self._quantize_array_to_int,
@@ -207,6 +220,8 @@ class QuantizableMixin(abc.ABC):
       first mapping are the quantized integer values; the second mapping are the
       quantized but rescaled float values.
     """
+    jax.debug.print("[CALLING FROM model_coding.py] QuantizableMixin.get_quantized_masked_flattened_params")
+    jax.debug.print("Called from class: {}", self.__class__.__name__)
 
     quantized_params_int = jax.tree_util.tree_map_with_path(
         functools.partial(
@@ -260,6 +275,8 @@ class QuantizableMixin(abc.ABC):
       KeyError: If the keys of `quantized_params_int` do not agree with keys of
       `self.quantized_params()`.
     """
+    jax.debug.print("[CALLING FROM model_coding.py] QuantizableMixin.unmask_and_unflatten_params")
+   
     mask = jax.tree_util.tree_map_with_path(self._get_mask, self.params_dict())
     if set(mask.keys()) != set(quantized_params_int.keys()):
       raise KeyError(
@@ -289,6 +306,8 @@ class QuantizableMixin(abc.ABC):
     Returns:
       Sum of all rates.
     """
+    jax.debug.print("[CALLING FROM model_coding.py] QuantizableMixin.compute_rate")
+
     quantized_params_int, _ = self.get_quantized_masked_flattened_params(
         q_step_weight, q_step_bias
     )
@@ -303,6 +322,8 @@ def quantize_at_step(x: Array, q_step: float) -> Array:
     x: Unquantized array of any shape.
     q_step: Quantization step.
   """
+  jax.debug.print("[CALLING FROM model_coding.py] quantize_at_step")
+
   return jnp.round(x / q_step)
 
 
@@ -315,6 +336,8 @@ def laplace_scale(x: Array) -> Array:
   Returns:
     Estimate of the scale parameter of a zero-mean Laplace distribution.
   """
+  jax.debug.print("[CALLING FROM model_coding.py] laplace_scale")
+
   return jnp.std(x) / math.sqrt(2)
 
 
@@ -334,6 +357,7 @@ def laplace_rate(
   Returns:
     Rate of quantized array under Laplace distribution.
   """
+  jax.debug.print("[CALLING FROM model_coding.py] laplace_rate")
   # Compute the discrete probabilities using the Laplace CDF. The mean is set to
   # 0 and the scale is set to std / sqrt(2) following the COOL-CHIC code. See:
   # https://github.com/Orange-OpenSource/Cool-Chic/blob/16c41c033d6fd03e9f038d4f37d1ca330d5f7e35/src/models/mlp_coding.py#L61

@@ -46,6 +46,7 @@ def edge_padding(
     per_frame_conv: bool = False,
 ) -> Array:
   """Replication/edge padding along the edges."""
+  #jax.debug.print("x: {}", x)
   # Note that the correct padding is k/2 for even k and (k-1)/2 for odd k.
   # This can be achieved with k // 2.
   pad_len = kernel_shape // 2
@@ -228,6 +229,7 @@ class Synthesis(hk.Module, model_coding.QuantizableMixin):
     Returns:
       Predicted image or video of shape ({T}, H, W, out_channels).
     """
+    jax.debug.print("called synthesis")
     return jnp.clip(
         self._net(latents),
         self._output_clip_range[0],
