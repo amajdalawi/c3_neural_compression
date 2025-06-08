@@ -311,7 +311,9 @@ class QuantizableMixin(abc.ABC):
     quantized_params_int, _ = self.get_quantized_masked_flattened_params(
         q_step_weight, q_step_bias
     )
+    print(quantized_params_int)
     rates = jax.tree_map(laplace_rate, quantized_params_int)
+    print(rates)
     return sum(rates.values())
 
 

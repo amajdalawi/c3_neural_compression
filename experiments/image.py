@@ -235,7 +235,9 @@ class Experiment(base.Experiment):
         kumaraswamy_a=kumaraswamy_a,
     )
     jax.debug.print("[CALLING FROM image.py] single_train_step 2, finised calculating grad, now getting optimizer")
-    
+    jax.debug.print("Grad norm (synthesis θ): {:.6f}", optax.global_norm(grads['synthesis']))
+    jax.debug.print("Grad norm (entropy ψ): {:.6f}", optax.global_norm(grads['autoregressive_entropy_model']))
+    jax.debug.print("Grad norm (latent z): {:.6f}", optax.global_norm(grads['latent']))
     # Compute updates and update parameters.
     opt = self.get_opt(
         use_cosine_schedule=use_cosine_schedule,

@@ -116,6 +116,8 @@ class AutoregressiveEntropyModelConvImage(
     else:
       self.context_num_rows_cols = (context_num_rows_cols,) * 2
     self.in_kernel_shape = tuple(2 * k + 1 for k in self.context_num_rows_cols)
+    print(f"in_kernal_shape is:")
+    print(self.in_kernel_shape)
 
     mask, w_init = self._get_first_layer_mask_and_init()
 
@@ -128,6 +130,7 @@ class AutoregressiveEntropyModelConvImage(
         name='masked_layer_0',
     ),]
     for i, width in enumerate(layers[1:] + (2,)):
+      print(f"output channels are: {width} for i: {i}")
       net += [
           self._activation_fn,
           hk.Conv2D(
@@ -493,6 +496,8 @@ def compute_rate(
   Returns:
     Rate (entropy) of x under model as array of shape (num_latents,).
   """
+  jax.debug.print("[CALLING FROM entropy_models.py] compute rate")
+
   # Ensure that the rate is computed in space where the bin width of the array x
   # is 1. Also ensure that the loc and scale of the Laplace distribution are
   # appropriately scaled.
@@ -529,6 +534,8 @@ def flatten_latent_grids(latent_grids: tuple[Array, ...]) -> Array:
     Array of shape (num_latents,) containing all flattened latent grids
     stacked into a single array.
   """
+  jax.debug.print("[CALLING FROM entropy_models.py] flatten_latent_grids")
+
   # Reshape each latent grid from ({t}, h, w) to ({t} * h * w,)
   all_latents = [latent_grid.reshape(-1) for latent_grid in latent_grids]
   # Stack into a single array of size (num_latents,)
@@ -549,7 +556,7 @@ def unflatten_latent_grids(
     List of all latent grids of shape ({T}, H, W), ({T/2}, H/2, W/2),
     ({T/4}, H/4, W/4), etc.
   """
-
+  jax.debug.print("[CALLING FROM entropy_models.py] unflatten_latent_grids")
   assert sum([np.prod(s) for s in latent_grid_shapes]) == len(flattened_latents)
 
   latent_grids = []

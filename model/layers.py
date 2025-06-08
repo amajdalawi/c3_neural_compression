@@ -147,16 +147,37 @@ def init_like_linear(shape, dtype):
   jax.debug.print("[CALLING FROM layers.py] init_like_linear")
   *spatial_dims, f_in, f_out = shape
   spatial_dims = tuple(spatial_dims)
-  assert f_in == 1, f'Input feature dimension needs to be 1 not {f_in}.'
+  assert f_in == 1, f"Expected input channels = 1, got {f_in}"
+
   lin_f_in = np.prod(spatial_dims) // 2
-  # Initialise weights using same initializer as `Linear` uses by default.
+  total_kernel_size = np.prod(spatial_dims)
+
+  jax.debug.print("[init_like_linear] spatial dims: {}", spatial_dims)
+  jax.debug.print("[init_like_linear] f_in={}, f_out={}", f_in, f_out)
+  jax.debug.print("[init_like_linear] lin_f_in (active positions): {}", lin_f_in)
+  jax.debug.print("[init_like_linear] total kernel size: {}", total_kernel_size)
+
+  # Init active weights
   weights = hk.initializers.TruncatedNormal(stddev=1 / jnp.sqrt(lin_f_in))(
       (lin_f_in, f_out), dtype=dtype
   )
+  jax.debug.print("[init_like_linear] active weights shape: {}", weights.shape)
+  jax.debug.print("[init_like_linear] active weights (first few rows):\n{}", weights[:min(3, weights.shape[0])])
+
+  # Add zeros for masked-out positions
   weights = jnp.concatenate(
       [weights, jnp.zeros((lin_f_in + 1, f_out), dtype=dtype)], axis=0
-  )  # set masked weights to zero
+  )
+  jax.debug.print("[init_like_linear] padded weights shape: {}", weights.shape)
+
+  # Reshape into convolutional kernel
   weights = weights.reshape(spatial_dims + (1, f_out))
+  jax.debug.print("[init_like_linear] final kernel shape: {}", weights.shape)
+
+  # Optional: show 1 output channel of the kernel
+  jax.debug.print("[init_like_linear] first output channel kernel slice (H×W):\n{}",
+                  weights[:, :, 0, 0] if len(spatial_dims) == 2 else "3D kernel too large to show")
+
   return weights
 
 
