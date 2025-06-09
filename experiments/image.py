@@ -33,6 +33,9 @@ import jax.numpy as jnp
 from jaxline import platform
 import numpy as np
 import optax
+import os
+from PIL import Image
+# import matplotlib.pyplot as plt
 
 from c3_neural_compression.experiments import base
 from c3_neural_compression.model import entropy_models
@@ -47,6 +50,34 @@ FLAGS = flags.FLAGS
 
 class Experiment(base.Experiment):
   """Per data-point compression experiment for images. Assume single-device."""
+
+
+  def _save_latents_to_png(self, params: hk.Params, step: int, output_dir: str = "./latents"):
+    """Save latent grids from Haiku parameters as PNG images."""
+    print("Printing latents...")
+    os.makedirs(output_dir, exist_ok=True)
+
+    for module_name, name, value in hk.data_structures.traverse(params):
+        if module_name.startswith("latent/latent_grid_"):
+            print("found this latent...")
+            latent_np = np.array(value)
+
+            # Normalize to 0–255
+            latent_min = latent_np.min()
+            latent_max = latent_np.max()
+            if latent_max - latent_min > 1e-8:
+                latent_np = (latent_np - latent_min) / (latent_max - latent_min)
+            else:
+                latent_np = np.zeros_like(latent_np)
+
+            img_array = (latent_np * 255).astype(np.uint8)
+
+            # Convert to image
+            img = Image.fromarray(img_array)
+            filename = f"{module_name.replace('/', '_')}_{name}_step{step:04d}.png"
+            path = os.path.join(output_dir, filename)
+            img.save(path)
+
 
   def init_params(self, input_res, soft_round_temp=None, input_mean=None):
     forward_init = jax.jit(
@@ -345,6 +376,9 @@ class Experiment(base.Experiment):
       # Split `rng` to ensure we use a different noise for noise quantization
       # at each step.
       # It is faster to split this on the CPU than outside of jit on GPU.
+      # if i % 20:
+      #   print("bruh")
+
       with jax.default_device(jax.local_devices(backend='cpu')[0]):
         rng, rng_used = jax.random.split(rng)
 
@@ -367,6 +401,8 @@ class Experiment(base.Experiment):
           soft_round_temp=soft_round_temp,
           kumaraswamy_a=kumaraswamy_a,
       )
+      if i  % 20:
+        self._save_latents_to_png(params, step=i)
 
       if i % self.config.opt.noise_log_every == 0:
         end = time.time()
