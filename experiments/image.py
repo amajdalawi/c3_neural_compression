@@ -620,6 +620,11 @@ class Experiment(base.Experiment):
     # Fit each image and log metrics pre/post model quantization per image.
     metrics_per_datum = collections.defaultdict(list)
 
+    # if normal_training:
+    #   pass
+    # else:
+    #   # should write code for getting
+    #   ...
     for i, input_dict in enumerate(self._train_data_iterator):
       # Extract image as array of shape [H, W, C]
       inputs = input_dict['array'].numpy()

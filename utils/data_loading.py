@@ -67,6 +67,13 @@ DATASET_ATTRIBUTES = {
         'train_size': 6 * 600 + 300,  # total number of frames
         'test_size': 6 * 600 + 300,  # total number of frames
     },
+    'KiTTi':{
+      'num_channels': 3,
+      'resolution': (1242, 375),
+      'type': 'image',
+      'train_size': 1,
+      'test_size': 1,
+    }
 }
 
 
@@ -146,6 +153,59 @@ class Kodak(data.Dataset):
       image = self.transform(image)
 
     return {'array': image}
+
+class KiTTi(data.Dataset):
+  "Data downloadable from idk where"
+
+  def __init__(
+      self,
+      root: str,
+      force_download: bool = False,
+      transform: Callable[[Any], torch.Tensor] | None = None,
+  ):
+    """Constructor.
+
+    Args:
+        root: base directory for downloading dataset. Directory is created if it
+          does not already exist.
+        force_download: if False, only downloads the dataset if it doesn't
+          already exist. If True, force downloads the dataset into the root,
+          overwriting existing files.
+        transform: callable for transforming the loaded images.
+    """
+    self.root = root
+    self.transform = transform
+    self.num_images = 24
+
+    self.path_list = [
+        os.path.join(self.root, 'kodim{:02}.png'.format(i))
+        for i in range(1, self.num_images + 1)  # Kodak images start at 1
+    ]
+
+    if force_download:
+      self._download()
+    else:
+      # Check if root directory exists
+      if os.path.exists(self.root):
+        # Check that there is a correct number of png files.
+        download_files = False
+        count = 0
+        for filename in os.listdir(self.root):
+          if filename.endswith('.png'):
+            count += 1
+        if count != self.num_images:
+          print('Files are missing, so proceed with download.')
+          download_files = True
+      else:
+        os.makedirs(self.root)
+        download_files = True
+
+      if download_files:
+        self._download()
+      else:
+        print(
+            'Files already exist and `force_download=False`, so do not download'
+        )
 
 
 class CLIC2020(data.Dataset):
@@ -354,7 +414,9 @@ class UVG(data.Dataset):
   def __len__(self) -> int:
     return np.prod(self.num_patches)
 
+  
 
+  
 def load_dataset(
     dataset_name: str,
     root: str,
