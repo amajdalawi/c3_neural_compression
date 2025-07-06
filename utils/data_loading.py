@@ -32,6 +32,14 @@ import tqdm
 
 
 DATASET_ATTRIBUTES = {
+    'kitti': { 'num_channels': 3,
+        # H x W
+        'resolution': (1242, 375),
+        'type': 'image',
+        'train_size': 1,
+        'test_size': 1,
+
+    },
     'clic2020': {
         'num_channels': 3,
         'resolution': None,  # Resolution varies by image
@@ -415,6 +423,60 @@ class UVG(data.Dataset):
     return np.prod(self.num_patches)
 
   
+import os
+import torch
+from torch.utils import data
+from torchvision.datasets import folder
+from typing import Callable, Any
+import glob
+
+
+class KITTI2012Stereo(data.Dataset):
+    """Dataset loader for KITTI 2012 stereo image pairs."""
+
+    def __init__(
+        self,
+        root: str,
+        transform: Callable[[Any], torch.Tensor] | None = None,
+    ):
+        """
+        Args:
+            root: Base directory containing 'image_02' and 'image_03' folders.
+            transform: Callable for transforming the loaded images.
+        """
+        self.root = root
+        self.transform = transform
+
+        # Paths to image_02 (left) and image_03 (right)
+        self.left_dir = os.path.join(root, 'image_02')
+        self.right_dir = os.path.join(root, 'image_03')
+
+        # Collect all filenames (assumes .png files sorted alphabetically)
+        self.left_images = sorted(glob.glob(os.path.join(self.left_dir, '*.png')))
+        self.right_images = sorted(glob.glob(os.path.join(self.right_dir, '*.png')))
+
+        assert len(self.left_images) == len(self.right_images), \
+            f"Mismatch between left ({len(self.left_images)}) and right ({len(self.right_images)}) images"
+
+    def __len__(self):
+        return len(self.left_images)
+
+    def __getitem__(self, idx):
+        left_path = self.left_images[idx]
+        right_path = self.right_images[idx]
+
+        left_img = folder.default_loader(left_path)
+        right_img = folder.default_loader(right_path)
+
+        if self.transform:
+            left_img = self.transform(left_img)
+            right_img = self.transform(right_img)
+
+        return {
+            'array': left_img,
+            'left': left_img,
+            'right': right_img
+        }
 
   
 def load_dataset(
@@ -456,6 +518,8 @@ def load_dataset(
   ])
 
   # Load dataset
+
+
   if dataset_name.startswith('uvg'):
     patch_size = (num_frames, *spatial_patch_size)
     ds = UVG(
@@ -480,9 +544,13 @@ def load_dataset(
     ds = CLIC2020(root=root, transform=transform)
     start_idx = 0
     end_idx = ds.num_images
+  elif dataset_name.startswith('kitti'):
+    ds = KITTI2012Stereo(root=root, transform=transform)
+    start_idx = 0
+    end_idx = len(ds)
   else:
     raise ValueError(f'Unrecognized dataset {dataset_name}.')
-
+  
   # Adjust start_idx and end_idx based on skip_examples and num_examples
   if skip_examples is not None:
     start_idx = start_idx + skip_examples
