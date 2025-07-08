@@ -55,10 +55,14 @@ class Experiment(base.Experiment):
   def _save_latents_to_png(self, params: hk.Params, step: int, output_dir: str = "./latents"):
     """Save latent grids from Haiku parameters as PNG images."""
     print("Printing latents...")
+    if output_dir == None:
+      output_dir = "./latents"
     os.makedirs(output_dir, exist_ok=True)
 
     for module_name, name, value in hk.data_structures.traverse(params):
-        if module_name.startswith("latent/latent_grid_"):
+        print("now im here")
+        print(module_name, name)
+        if module_name.startswith("latent"):
             print("found this latent...")
             latent_np = np.array(value)
 
@@ -71,11 +75,13 @@ class Experiment(base.Experiment):
                 latent_np = np.zeros_like(latent_np)
 
             img_array = (latent_np * 255).astype(np.uint8)
-
+            print("now .im actually here")
             # Convert to image
             img = Image.fromarray(img_array)
             filename = f"{module_name.replace('/', '_')}_{name}_step{step:04d}.png"
+            print(filename)
             path = os.path.join(output_dir, filename)
+            print('saving...')
             img.save(path)
 
 
@@ -327,7 +333,7 @@ class Experiment(base.Experiment):
     logging_message = textwrap.fill(logging_message, 80)
     logging.info(logging_message)
 
-  def fit_datum(self, inputs, rng):
+  def fit_datum(self, inputs, rng, save_location: str | None = None):
     # Move input to the GPU (or other existing device). Otherwise it gets
     # transferred every microstep!
     inputs = jax.device_put(inputs, jax.devices()[0])
@@ -401,8 +407,8 @@ class Experiment(base.Experiment):
           soft_round_temp=soft_round_temp,
           kumaraswamy_a=kumaraswamy_a,
       )
-      if i  % 20:
-        self._save_latents_to_png(params, step=i)
+      if i  % 20 == 0:
+        self._save_latents_to_png(params, step=i, output_dir=save_location)
 
       if i % self.config.opt.noise_log_every == 0:
         end = time.time()
@@ -628,6 +634,7 @@ class Experiment(base.Experiment):
     for i, input_dict in enumerate(self._train_data_iterator):
       # Extract image as array of shape [H, W, C]
       inputs = input_dict['array'].numpy()
+
       input_shape = inputs.shape
       num_pixels = self._num_pixels(input_res=input_shape[:-1])
       logging.info('inputs shape: %s', input_shape)
@@ -639,6 +646,37 @@ class Experiment(base.Experiment):
       # Fit inputs of shape [H, W, C].
       params = self.fit_datum(inputs, rng)
 
+      #doing right
+      print('doing right')
+      inputs_right = input_dict['right'].numpy()
+
+      inputs_shape_right = inputs_right.shape
+      num_pixels = self._num_pixels(input_res=inputs_shape_right[:-1])
+      logging.info('inputs_right shape: %s', inputs_shape_right)
+      logging.info('num_pixels: %s', num_pixels)
+
+      # Compute MACs per pixel.
+      macs_per_pixel = self._count_macs_per_pixel(inputs_shape_right)
+
+      # Fit inputs_right of shape [H, W, C].
+      params = self.fit_datum(inputs_right, rng)
+
+
+      # left
+      print("doing left...")
+      inputs_left = input_dict['left'].numpy()
+
+      inputs_shape_left = inputs_left.shape
+      num_pixels = self._num_pixels(input_res=inputs_shape_left[:-1])
+      logging.info('inputs_left shape: %s', inputs_shape_left)
+      logging.info('num_pixels: %s', num_pixels)
+
+      # Compute MACs per pixel.
+      macs_per_pixel = self._count_macs_per_pixel(inputs_shape_left)
+
+      # Fit inputs_left of shape [H, W, C].
+      params = self.fit_datum(inputs_left, rng)
+    
       # Evaluate unquantized model after training. Note that this will *not*
       # include model parameters in rate calculations.
       metrics = self.eval(params, inputs, blocked_rates=True)

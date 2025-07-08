@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-"""Config for KODAK experiment."""
+"""Config for KiTTi2012 experiment."""
 
 from ml_collections import config_dict
 
