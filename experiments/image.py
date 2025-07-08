@@ -632,19 +632,6 @@ class Experiment(base.Experiment):
     #   # should write code for getting
     #   ...
     for i, input_dict in enumerate(self._train_data_iterator):
-      # Extract image as array of shape [H, W, C]
-      inputs = input_dict['array'].numpy()
-
-      input_shape = inputs.shape
-      num_pixels = self._num_pixels(input_res=input_shape[:-1])
-      logging.info('inputs shape: %s', input_shape)
-      logging.info('num_pixels: %s', num_pixels)
-
-      # Compute MACs per pixel.
-      macs_per_pixel = self._count_macs_per_pixel(input_shape)
-
-      # Fit inputs of shape [H, W, C].
-      params = self.fit_datum(inputs, rng)
 
       #doing right
       print('doing right')
@@ -659,7 +646,7 @@ class Experiment(base.Experiment):
       macs_per_pixel = self._count_macs_per_pixel(inputs_shape_right)
 
       # Fit inputs_right of shape [H, W, C].
-      params = self.fit_datum(inputs_right, rng)
+      params = self.fit_datum(inputs_right, rng, save_location="./latents_right")
 
 
       # left
@@ -670,12 +657,27 @@ class Experiment(base.Experiment):
       num_pixels = self._num_pixels(input_res=inputs_shape_left[:-1])
       logging.info('inputs_left shape: %s', inputs_shape_left)
       logging.info('num_pixels: %s', num_pixels)
-
-      # Compute MACs per pixel.
       macs_per_pixel = self._count_macs_per_pixel(inputs_shape_left)
 
       # Fit inputs_left of shape [H, W, C].
-      params = self.fit_datum(inputs_left, rng)
+      params = self.fit_datum(inputs_left, rng, save_location="./latents_left")
+
+      # Extract image as array of shape [H, W, C]
+      inputs = input_dict['array'].numpy()
+
+      input_shape = inputs.shape
+      num_pixels = self._num_pixels(input_res=input_shape[:-1])
+      logging.info('inputs shape: %s', input_shape)
+      logging.info('num_pixels: %s', num_pixels)
+
+      # Compute MACs per pixel.
+      macs_per_pixel = self._count_macs_per_pixel(input_shape)
+
+      # Fit inputs of shape [H, W, C].
+      params = self.fit_datum(inputs, rng)
+
+      # Compute MACs per pixel.
+
     
       # Evaluate unquantized model after training. Note that this will *not*
       # include model parameters in rate calculations.
