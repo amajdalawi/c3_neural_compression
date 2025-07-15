@@ -39,8 +39,8 @@ def get_config() -> config_dict.ConfigDict:
   # Optimizer config. This optimizer is used to optimize a COOL-CHIC model for a
   # given image within the `step` method.
   exp.opt.grad_norm_clip = 1e-1
-  exp.opt.num_noise_steps = 500
-  exp.opt.max_num_ste_steps = 30
+  exp.opt.num_noise_steps = 5000
+  exp.opt.max_num_ste_steps = 200
   # Optimization in the noise quantization regime uses a cosine decay learning
   # rate schedule
   exp.opt.cosine_decay_schedule = True
@@ -89,7 +89,7 @@ def get_config() -> config_dict.ConfigDict:
 
   # Loss config
   # Rate-distortion weight used in loss (corresponds to lambda in paper)
-  exp.loss.rd_weight = 0.001
+  exp.loss.rd_weight = 0.004
   # Use rd_weight warmup for the noise steps. 0 means no warmup is used.
   exp.loss.rd_weight_warmup_steps = 0
 
@@ -171,7 +171,7 @@ def get_config() -> config_dict.ConfigDict:
   exp.model.quant.q_steps_bias = [5e-5, 1e-4, 5e-4, 1e-3, 3e-3, 6e-3, 1e-2]
 
   # Prevents accidentally setting keys that aren't recognized (e.g. in tests).
-  config.lock()
+  # config.lock()
 
   return config
 
