@@ -1,3 +1,6 @@
+# what the fuck, this is the modified code for having fixed latents
+
+
 # Copyright 2024 DeepMind Technologies Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,7 +48,28 @@ from c3_neural_compression.utils import psnr as psnr_utils
 
 Array = chex.Array
 
+def load_latent_grids_from_dir(directory: str, prefix: str = "latent_latent_grid_") -> tuple[jnp.ndarray, ...]:
+    # Get sorted list of latent PNGs
+    latent_files = sorted([
+        f for f in os.listdir(directory)
+        if f.startswith(prefix) and f.endswith(".png")
+    ], key=lambda x: int(x.split("_")[3]))  # Extract grid index from name
+
+    # Load and normalize each PNG to [0, 1]
+    grids = []
+    for file in latent_files:
+        path = os.path.join(directory, file)
+        img = Image.open(path).convert("L")  # Grayscale
+        arr = np.array(img).astype(np.float32) / 255.0
+        grids.append(jnp.array(arr))
+    return tuple(grids)
+
+
 FLAGS = flags.FLAGS
+# print("LOADING FIXED LATENTS FROM:", os.getcwd())
+# print("FULL PATH:", os.path.abspath("./c3_neural_compression/latents/"))
+fixed_latents = load_latent_grids_from_dir("/content/latents/")
+
 
 
 class Experiment(base.Experiment):
@@ -109,7 +133,7 @@ class Experiment(base.Experiment):
   def _get_entropy_model(self):
     """Returns entropy model."""
     return entropy_models.AutoregressiveEntropyModelConvImage(
-        **self.config.model.entropy,
+        **self.config.model.entropy, fixed_latents=fixed_latents
     )
 
   def _get_entropy_params(self, latent_grids):

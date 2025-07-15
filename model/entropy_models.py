@@ -1,3 +1,7 @@
+# what the fuck, this is the modified code for having fixed latenst into encoding model model
+
+
+
 # Copyright 2024 DeepMind Technologies Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,6 +61,17 @@ def _clip_log_scale(
     )
   return log_scale
 
+# from jax import numpy as jnp
+
+def selective_causal_mask(kernel_shape, f_out):
+    kh, kw = kernel_shape
+    num_entries = kh * kw
+    base_mask = jnp.arange(num_entries) < (num_entries // 2)
+    base_mask = base_mask.reshape((kh, kw, 1, 1))
+    mask_fixed = jnp.ones_like(base_mask)
+    mask_model = base_mask
+    mask = jnp.concatenate([mask_fixed, mask_model], axis=2)
+    return jnp.broadcast_to(mask, (kh, kw, 2, f_out))
 
 class AutoregressiveEntropyModelConvImage(
     hk.Module, model_coding.QuantizableMixin
@@ -77,6 +92,7 @@ class AutoregressiveEntropyModelConvImage(
       scale_range: tuple[float, float] | None = None,
       clip_like_cool_chic: bool = True,
       use_linear_w_init: bool = True,
+      fixed_latents: tuple[Array, ...] | None = None
   ):
     """Constructor.
 
@@ -109,7 +125,7 @@ class AutoregressiveEntropyModelConvImage(
     self._conditional_spec = conditional_spec
     self._shift_log_scale = shift_log_scale
     self._use_linear_w_init = use_linear_w_init
-
+    self.fixed_latents = fixed_latents  
     if isinstance(context_num_rows_cols, tuple):
       self.context_num_rows_cols = context_num_rows_cols
     else:
@@ -117,15 +133,15 @@ class AutoregressiveEntropyModelConvImage(
     self.in_kernel_shape = tuple(2 * k + 1 for k in self.context_num_rows_cols)
 
     mask, w_init = self._get_first_layer_mask_and_init()
-
-    net = []
-    net += [hk.Conv2D(
+    mask = selective_causal_mask(self.in_kernel_shape, f_out=layers[0])
+    self.first_conv = hk.Conv2D(
         output_channels=layers[0],
         kernel_shape=self.in_kernel_shape,
         mask=mask,
-        w_init=w_init,
-        name='masked_layer_0',
-    ),]
+        name='masked_combined_conv'
+    )
+    net = []
+    net += [self.first_conv,]
     for i, width in enumerate(layers[1:] + (2,)):
       net += [
           self._activation_fn,
@@ -181,56 +197,77 @@ class AutoregressiveEntropyModelConvImage(
       (num_latents,).
     """
 
-    assert len(latent_grids[0].shape) in (2, 3)
+    assert self.fixed_latents is not None
+    assert len(self.fixed_latents) == len(latent_grids)
 
-    if len(latent_grids[0].shape) == 3:
-      bs = latent_grids[0].shape[0]
-    else:
-      bs = None
+    dist_params = []
+    for fixed, model in zip(self.fixed_latents, latent_grids):
+        assert fixed.shape == model.shape
+        x = jnp.stack([fixed, model], axis=-1)  # (H, W, 2)
+        # out = self.first_conv(x)
+        out = self.net(x)
+        dist_params.append(out)
 
-    if self._conditional_spec.use_conditioning:
-      if self._conditional_spec.use_prev_grid:
-        grids_cond = (jnp.zeros_like(latent_grids[0]),) + latent_grids[:-1]
-        dist_params = []
-        for prev_grid, grid in zip(grids_cond, latent_grids):
-          # Resize `prev_grid` to have the same resolution as the current grid
-          prev_grid_resized = jax.image.resize(
-              prev_grid,
-              shape=grid.shape,
-              method=self._conditional_spec.interpolation
-          )
-          inputs = jnp.stack(
-              [prev_grid_resized, grid], axis=-1
-          )  # (h[k], w[k], 2)
-          out = self.net(inputs)
-          dist_params.append(out)
-      else:
-        raise ValueError('use_prev_grid is False')
-    else:
-      # If not using conditioning, just apply the same network to each latent
-      # grid. Each element of dist_params has shape (h[k], w[k], 2).
-      dist_params = [self.net(g[..., None]) for g in latent_grids]
+    dist_params = [p.reshape(-1, 2) for p in dist_params]
+    dist_params = jnp.concatenate(dist_params, axis=0)
+    loc, log_scale = dist_params[:, 0], dist_params[:, 1]
+    log_scale += self._shift_log_scale
 
-    if bs is not None:
-      dist_params = [p.reshape(bs, -1, 2) for p in dist_params]
-      dist_params = jnp.concatenate(dist_params, axis=1)  # (bs, num_latents, 2)
-    else:
-      dist_params = [p.reshape(-1, 2) for p in dist_params]
-      dist_params = jnp.concatenate(dist_params, axis=0)  # (num_latents, 2)
-
-    assert dist_params.shape[-1] == 2
-    loc, log_scale = dist_params[..., 0], dist_params[..., 1]
-
-    log_scale = log_scale + self._shift_log_scale
-
-    # Optionally clip log scale (we clip scale in log space to avoid overflow).
     if self._scale_range is not None:
-      log_scale = _clip_log_scale(
-          log_scale, self._scale_range, self._clip_like_cool_chic
-      )
-    # Convert log scale to scale (which ensures scale is positive)
+        log_scale = _clip_log_scale(log_scale, self._scale_range, self._clip_like_cool_chic)
     scale = jnp.exp(log_scale)
     return loc, scale
+
+    # assert len(latent_grids[0].shape) in (2, 3)
+
+    # if len(latent_grids[0].shape) == 3:
+    #   bs = latent_grids[0].shape[0]
+    # else:
+    #   bs = None
+
+    # if self._conditional_spec.use_conditioning:
+    #   if self._conditional_spec.use_prev_grid:
+    #     grids_cond = (jnp.zeros_like(latent_grids[0]),) + latent_grids[:-1]
+    #     dist_params = []
+    #     for prev_grid, grid in zip(grids_cond, latent_grids):
+    #       # Resize `prev_grid` to have the same resolution as the current grid
+    #       prev_grid_resized = jax.image.resize(
+    #           prev_grid,
+    #           shape=grid.shape,
+    #           method=self._conditional_spec.interpolation
+    #       )
+    #       inputs = jnp.stack(
+    #           [prev_grid_resized, grid], axis=-1
+    #       )  # (h[k], w[k], 2)
+    #       out = self.net(inputs)
+    #       dist_params.append(out)
+    #   else:
+    #     raise ValueError('use_prev_grid is False')
+    # else:
+    #   # If not using conditioning, just apply the same network to each latent
+    #   # grid. Each element of dist_params has shape (h[k], w[k], 2).
+    #   dist_params = [self.net(g[..., None]) for g in latent_grids]
+
+    # if bs is not None:
+    #   dist_params = [p.reshape(bs, -1, 2) for p in dist_params]
+    #   dist_params = jnp.concatenate(dist_params, axis=1)  # (bs, num_latents, 2)
+    # else:
+    #   dist_params = [p.reshape(-1, 2) for p in dist_params]
+    #   dist_params = jnp.concatenate(dist_params, axis=0)  # (num_latents, 2)
+
+    # assert dist_params.shape[-1] == 2
+    # loc, log_scale = dist_params[..., 0], dist_params[..., 1]
+
+    # log_scale = log_scale + self._shift_log_scale
+
+    # # Optionally clip log scale (we clip scale in log space to avoid overflow).
+    # if self._scale_range is not None:
+    #   log_scale = _clip_log_scale(
+    #       log_scale, self._scale_range, self._clip_like_cool_chic
+    #   )
+    # # Convert log scale to scale (which ensures scale is positive)
+    # scale = jnp.exp(log_scale)
+    # return loc, scale
 
 
 class AutoregressiveEntropyModelConvVideo(
