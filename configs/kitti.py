@@ -89,7 +89,7 @@ def get_config() -> config_dict.ConfigDict:
 
   # Loss config
   # Rate-distortion weight used in loss (corresponds to lambda in paper)
-  exp.loss.rd_weight = 0.004
+  exp.loss.rd_weight = 0.0004
   # Use rd_weight warmup for the noise steps. 0 means no warmup is used.
   exp.loss.rd_weight_warmup_steps = 0
 
