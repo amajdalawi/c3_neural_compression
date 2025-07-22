@@ -63,15 +63,63 @@ def _clip_log_scale(
 
 # from jax import numpy as jnp
 
-def selective_causal_mask(kernel_shape, f_out):
+def selective_rgb_latent_mask(kernel_shape: tuple[int, int], f_out: int) -> jnp.ndarray:
     kh, kw = kernel_shape
     num_entries = kh * kw
     base_mask = jnp.arange(num_entries) < (num_entries // 2)
     base_mask = base_mask.reshape((kh, kw, 1, 1))
-    mask_fixed = jnp.ones_like(base_mask)
-    mask_model = base_mask
-    mask = jnp.concatenate([mask_fixed, mask_model], axis=2)
-    return jnp.broadcast_to(mask, (kh, kw, 2, f_out))
+
+    # RGB → unmasked (3 channels)
+    mask_rgb = jnp.ones((kh, kw, 3, 1), dtype=bool)
+
+    # Latent → causal mask (1 channel)
+    mask_latent = base_mask.astype(bool)
+
+    # Combine along input channel dim: (kh, kw, 4, 1)
+    mask = jnp.concatenate([mask_rgb, mask_latent], axis=2)
+
+    return jnp.broadcast_to(mask, (kh, kw, 4, f_out))
+
+
+
+# def selective_causal_mask(kernel_shape, f_out):
+#     kh, kw = kernel_shape
+#     num_entries = kh * kw
+#     base_mask = jnp.arange(num_entries) < (num_entries // 2)
+#     base_mask = base_mask.reshape((kh, kw, 1, 1))
+#     mask_fixed = jnp.ones_like(base_mask)
+#     mask_model = base_mask
+#     mask = jnp.concatenate([mask_fixed, mask_model], axis=2)
+#     return jnp.broadcast_to(mask, (kh, kw, 2, f_out))
+
+def selective_causal_mask(kernel_shape, num_input_channels: int, masked_channel_idx: int, f_out: int) -> Array:
+    """
+    Creates a causal mask over only one channel of input.
+
+    Args:
+        kernel_shape: Tuple[int, int] — kernel size
+        num_input_channels: Total number of input channels (e.g. 4)
+        masked_channel_idx: Index of channel to apply causal mask to (e.g. 3)
+        f_out: Output channels
+
+    Returns:
+        A mask of shape (kh, kw, num_input_channels, f_out)
+    """
+    kh, kw = kernel_shape
+    num_entries = kh * kw
+    base_mask = jnp.arange(num_entries) < (num_entries // 2)
+    base_mask = base_mask.reshape((kh, kw, 1, 1))
+
+    # All channels default to fully visible (no mask)
+    full_mask = jnp.ones((kh, kw, num_input_channels, f_out))
+
+    # Apply causal mask only to the specified channel
+    full_mask = full_mask.at[:, :, masked_channel_idx, :].set(base_mask[:, :, 0, 0])
+
+    return full_mask
+
+
+
 
 class AutoregressiveEntropyModelConvImage(
     hk.Module, model_coding.QuantizableMixin
@@ -201,12 +249,12 @@ class AutoregressiveEntropyModelConvImage(
     assert len(self.fixed_latents) == len(latent_grids)
 
     dist_params = []
-    for fixed, model in zip(self.fixed_latents, latent_grids):
-        assert fixed.shape == model.shape
-        x = jnp.stack([fixed, model], axis=-1)  # (H, W, 2)
-        # out = self.first_conv(x)
-        out = self.net(x)
-        dist_params.append(out)
+    for fixed_rgb, latent in zip(self.fixed_latents, latent_grids):
+      assert fixed_rgb.shape[:2] == latent.shape
+      latent_exp = latent[..., None]  # (H, W, 1)
+      x = jnp.concatenate([fixed_rgb, latent_exp], axis=-1)  # (H, W, 4)
+      out = self.net(x)
+      dist_params.append(out)
 
     dist_params = [p.reshape(-1, 2) for p in dist_params]
     dist_params = jnp.concatenate(dist_params, axis=0)

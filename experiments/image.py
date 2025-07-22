@@ -68,7 +68,70 @@ def load_latent_grids_from_dir(directory: str, prefix: str = "latent_latent_grid
 FLAGS = flags.FLAGS
 # print("LOADING FIXED LATENTS FROM:", os.getcwd())
 # print("FULL PATH:", os.path.abspath("./c3_neural_compression/latents/"))
-fixed_latents = load_latent_grids_from_dir("/content/latents/")
+# fixed_latents = load_latent_grids_from_dir("./c3_neural_compression/latents/")
+
+
+def get_latent_shapes_from_input_res(
+    input_res: Tuple[int, int],
+    num_grids: int,
+    downsampling_exponents: Sequence[float] | None = None,
+    downsampling_factor: float | Tuple[float, float] = 2.0,
+) -> Tuple[Tuple[int, int], ...]:
+    """Returns the expected latent shapes given resolution + downsampling logic."""
+    H, W = input_res
+
+    if downsampling_exponents is None:
+        downsampling_exponents = range(num_grids)
+
+    if isinstance(downsampling_factor, (int, float)):
+        df = (downsampling_factor,) * 2
+    else:
+        df = downsampling_factor
+
+    shapes = []
+    for e in downsampling_exponents:
+        h = int(math.ceil(H / (df[0] ** e)))
+        w = int(math.ceil(W / (df[1] ** e)))
+        shapes.append((h, w))
+    return tuple(shapes)
+
+def downsample_rgb_image_to_match_latents(
+    image_path: str,
+    num_grids: int = 7,
+    downsampling_exponents: Sequence[float] | None = None,
+    downsampling_factor: float | Tuple[float, float] = 2.0,
+) -> Tuple[jnp.ndarray, ...]:
+    """
+    Loads RGB image and downsamples it to match latent grid shapes based on model logic.
+
+    Returns:
+        Tuple of jnp arrays, each of shape (H_i, W_i, 3)
+    """
+    img = Image.open(image_path).convert("RGB")
+    input_res = img.size[::-1]  # PIL gives (W, H), we want (H, W)
+
+    target_shapes = get_latent_shapes_from_input_res(
+        input_res=input_res,
+        num_grids=num_grids,
+        downsampling_exponents=downsampling_exponents,
+        downsampling_factor=downsampling_factor,
+    )
+
+    outputs = []
+    for h, w in target_shapes:
+        resized = img.resize((w, h), Image.BILINEAR)
+        arr = np.array(resized).astype(np.float32) / 255.0
+        outputs.append(jnp.array(arr))
+
+    return tuple(outputs)
+
+fixed_latents = downsample_rgb_image_to_match_latents(
+    image_path="0000000000.png",
+    num_grids=7,
+    downsampling_factor=2.0  # or (2.0, 2.0)
+)
+
+
 
 
 
