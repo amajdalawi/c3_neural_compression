@@ -126,7 +126,7 @@ def downsample_rgb_image_to_match_latents(
     return tuple(outputs)
 
 fixed_latents = downsample_rgb_image_to_match_latents(
-    image_path="0000000000.png",
+    image_path="./c3_neural_compression/kitti/image_02/0000000000.png",
     num_grids=7,
     downsampling_factor=2.0  # or (2.0, 2.0)
 )
