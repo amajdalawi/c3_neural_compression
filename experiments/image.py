@@ -357,7 +357,8 @@ class Experiment(base.Experiment):
     logging_message = textwrap.fill(logging_message, 80)
     logging.info(logging_message)
 
-  def fit_datum(self, inputs, rng, save_location: str | None = None):
+  def fit_datum(self, inputs, rng, save_location: str | None = None, rd_weight_configured=None):
+
     # Move input to the GPU (or other existing device). Otherwise it gets
     # transferred every microstep!
     inputs = jax.device_put(inputs, jax.devices()[0])
@@ -388,10 +389,10 @@ class Experiment(base.Experiment):
     # Function for optional linear warmup of rd_weight.
     if self.config.loss.rd_weight_warmup_steps > 0:
       rd_weight_fn = optax.linear_schedule(
-          init_value=0,
-          end_value=self.config.loss.rd_weight,
-          transition_steps=self.config.loss.rd_weight_warmup_steps - 1
-      )
+        init_value=0,
+        end_value=self.config.loss.rd_weight,
+        transition_steps=self.config.loss.rd_weight_warmup_steps - 1
+    )
     else:
       rd_weight_fn = lambda _: self.config.loss.rd_weight
     if self.config.quant.use_kumaraswamy_noise:
