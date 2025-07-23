@@ -95,26 +95,22 @@ def selective_rgb_latent_mask(kernel_shape: tuple[int, int], f_out: int) -> jnp.
 def selective_causal_mask(kernel_shape, num_input_channels: int, masked_channel_idx: int, f_out: int) -> Array:
     """
     Creates a causal mask over only one channel of input.
-
-    Args:
-        kernel_shape: Tuple[int, int] — kernel size
-        num_input_channels: Total number of input channels (e.g. 4)
-        masked_channel_idx: Index of channel to apply causal mask to (e.g. 3)
-        f_out: Output channels
-
-    Returns:
-        A mask of shape (kh, kw, num_input_channels, f_out)
     """
     kh, kw = kernel_shape
     num_entries = kh * kw
-    base_mask = jnp.arange(num_entries) < (num_entries // 2)
-    base_mask = base_mask.reshape((kh, kw, 1, 1))
 
-    # All channels default to fully visible (no mask)
-    full_mask = jnp.ones((kh, kw, num_input_channels, f_out))
+    # This is the 2D causal mask (True for causal positions, False for future)
+    base_mask = (jnp.arange(num_entries) < (num_entries // 2)).reshape((kh, kw))
 
-    # Apply causal mask only to the specified channel
-    full_mask = full_mask.at[:, :, masked_channel_idx, :].set(base_mask[:, :, 0, 0])
+    # Now expand to (kh, kw, f_out)
+    base_mask = base_mask[..., None]  # (kh, kw, 1)
+    base_mask = jnp.broadcast_to(base_mask, (kh, kw, f_out))  # (kh, kw, f_out)
+
+    # Now build full mask: everything allowed by default
+    full_mask = jnp.ones((kh, kw, num_input_channels, f_out), dtype=jnp.float32)
+
+    # Apply causal mask to only the `masked_channel_idx`
+    full_mask = full_mask.at[:, :, masked_channel_idx, :].set(base_mask)
 
     return full_mask
 
@@ -181,13 +177,20 @@ class AutoregressiveEntropyModelConvImage(
     self.in_kernel_shape = tuple(2 * k + 1 for k in self.context_num_rows_cols)
 
     mask, w_init = self._get_first_layer_mask_and_init()
-    mask = selective_causal_mask(self.in_kernel_shape, f_out=layers[0])
+    num_input_channels = 4  # 3 from RGB + 1 from latent
+    mask = selective_causal_mask(
+        kernel_shape=self.in_kernel_shape,
+        num_input_channels=num_input_channels,
+        masked_channel_idx=3,  # Apply causal mask only to latent channel
+        f_out=layers[0]
+    )
+
     self.first_conv = hk.Conv2D(
         output_channels=layers[0],
         kernel_shape=self.in_kernel_shape,
         mask=mask,
         name='masked_combined_conv'
-    )
+    )    
     net = []
     net += [self.first_conv,]
     for i, width in enumerate(layers[1:] + (2,)):

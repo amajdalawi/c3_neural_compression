@@ -39,6 +39,8 @@ import optax
 import os
 from PIL import Image
 # import matplotlib.pyplot as plt
+from typing import Sequence, Tuple
+import math
 
 from c3_neural_compression.experiments import base
 from c3_neural_compression.model import entropy_models
@@ -72,11 +74,11 @@ FLAGS = flags.FLAGS
 
 
 def get_latent_shapes_from_input_res(
-    input_res: Tuple[int, int],
+    input_res: tuple[int, int],
     num_grids: int,
     downsampling_exponents: Sequence[float] | None = None,
-    downsampling_factor: float | Tuple[float, float] = 2.0,
-) -> Tuple[Tuple[int, int], ...]:
+    downsampling_factor: float | tuple[float, float] = 2.0,
+) -> tuple[tuple[int, int], ...]:
     """Returns the expected latent shapes given resolution + downsampling logic."""
     H, W = input_res
 
@@ -99,13 +101,13 @@ def downsample_rgb_image_to_match_latents(
     image_path: str,
     num_grids: int = 7,
     downsampling_exponents: Sequence[float] | None = None,
-    downsampling_factor: float | Tuple[float, float] = 2.0,
-) -> Tuple[jnp.ndarray, ...]:
+    downsampling_factor: float | tuple[float, float] = 2.0,
+) -> tuple[jnp.ndarray, ...]:
     """
     Loads RGB image and downsamples it to match latent grid shapes based on model logic.
 
     Returns:
-        Tuple of jnp arrays, each of shape (H_i, W_i, 3)
+        tuple of jnp arrays, each of shape (H_i, W_i, 3)
     """
     img = Image.open(image_path).convert("RGB")
     input_res = img.size[::-1]  # PIL gives (W, H), we want (H, W)
