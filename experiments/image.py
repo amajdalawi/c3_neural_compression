@@ -79,58 +79,50 @@ def get_latent_shapes_from_input_res(
     downsampling_exponents: Sequence[float] | None = None,
     downsampling_factor: float | tuple[float, float] = 2.0,
 ) -> tuple[tuple[int, int], ...]:
-    """Returns the expected latent shapes given resolution + downsampling logic."""
     H, W = input_res
-
     if downsampling_exponents is None:
         downsampling_exponents = range(num_grids)
+    df = (downsampling_factor,) * 2 if isinstance(downsampling_factor, (int, float)) else downsampling_factor
+    return tuple((int(math.ceil(H / (df[0] ** e))), int(math.ceil(W / (df[1] ** e)))) for e in downsampling_exponents)
 
-    if isinstance(downsampling_factor, (int, float)):
-        df = (downsampling_factor,) * 2
-    else:
-        df = downsampling_factor
-
-    shapes = []
-    for e in downsampling_exponents:
-        h = int(math.ceil(H / (df[0] ** e)))
-        w = int(math.ceil(W / (df[1] ** e)))
-        shapes.append((h, w))
-    return tuple(shapes)
+def add_uniform_noise_to_snr(x: jnp.ndarray, snr_db: float) -> jnp.ndarray:
+    signal_power = jnp.mean(jnp.square(x))
+    snr_linear = 10 ** (snr_db / 10)
+    noise_power = signal_power / snr_linear
+    noise_range = jnp.sqrt(3 * noise_power)
+    noise = jax.random.uniform(jax.random.PRNGKey(0), x.shape, minval=-noise_range, maxval=noise_range)
+    return x + noise
 
 def downsample_rgb_image_to_match_latents(
     image_path: str,
     num_grids: int = 7,
     downsampling_exponents: Sequence[float] | None = None,
     downsampling_factor: float | tuple[float, float] = 2.0,
+    snr_db: float | None = None,
 ) -> tuple[jnp.ndarray, ...]:
-    """
-    Loads RGB image and downsamples it to match latent grid shapes based on model logic.
-
-    Returns:
-        tuple of jnp arrays, each of shape (H_i, W_i, 3)
-    """
     img = Image.open(image_path).convert("RGB")
-    input_res = img.size[::-1]  # PIL gives (W, H), we want (H, W)
-
-    target_shapes = get_latent_shapes_from_input_res(
-        input_res=input_res,
-        num_grids=num_grids,
-        downsampling_exponents=downsampling_exponents,
-        downsampling_factor=downsampling_factor,
-    )
+    input_res = img.size[::-1]  # PIL gives (W, H)
+    target_shapes = get_latent_shapes_from_input_res(input_res, num_grids, downsampling_exponents, downsampling_factor)
 
     outputs = []
     for h, w in target_shapes:
         resized = img.resize((w, h), Image.BILINEAR)
         arr = np.array(resized).astype(np.float32) / 255.0
-        outputs.append(jnp.array(arr))
+        arr_jnp = jnp.array(arr)
+        if snr_db is not None:
+            arr_jnp = add_uniform_noise_to_snr(arr_jnp, snr_db)
+        outputs.append(arr_jnp)
 
     return tuple(outputs)
+
+# image_03 is left, same
+# image_02 is right, stereo
 
 fixed_latents = downsample_rgb_image_to_match_latents(
     image_path="./c3_neural_compression/kitti/image_02/0000000000.png",
     num_grids=7,
-    downsampling_factor=2.0  # or (2.0, 2.0)
+    downsampling_factor=2.0,  # or (2.0, 2.0)
+    snr_db=20
 )
 
 
