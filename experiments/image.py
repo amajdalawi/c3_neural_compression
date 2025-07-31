@@ -17,7 +17,7 @@
 # ==============================================================================
 
 """Jaxline experiment for C3 image experiments. Assume single-device."""
-
+import json
 import collections
 from collections.abc import Mapping
 import functools
@@ -742,6 +742,40 @@ class Experiment(base.Experiment):
 
       # # Fit inputs_left of shape [H, W, C].
       # params = self.fit_datum(inputs_left, rng, save_location="./latents_left")
+
+      rd_weight_list = [0.0001, 0.00005, 0.00002]
+      results = []
+
+      for rd in rd_weight_list:
+          print(f"Training with rd_weight = {rd}")
+          self.config.loss.rd_weight = rd
+
+          # Train model
+          params = self.fit_datum(inputs, rng)
+
+          # Quantize model and evaluate
+          _, quantized_metrics = self.quantization_step_search(params, inputs)
+
+          num_pixels = np.prod(inputs.shape[:-1])
+          final_psnr = float(quantized_metrics["psnr"])
+          final_bpp = (
+              float(quantized_metrics["rate"]) +
+              float(quantized_metrics["synthesis"]) +
+              float(quantized_metrics["entropy"])
+          ) / num_pixels
+
+          results.append({
+              "rd_weight": rd,
+              "psnr": final_psnr,
+              "bpp": final_bpp
+          })
+
+          print(f"RD point — rd_weight: {rd}, PSNR: {final_psnr:.4f}, BPP: {final_bpp:.6f}")
+
+      print("SAVING INTO JSON.....")
+      with open('rd_curve_points.json','w') as f:
+        json.dump(results, f, indent=2) 
+
 
       # Extract image as array of shape [H, W, C]
       inputs = input_dict['array'].numpy()
