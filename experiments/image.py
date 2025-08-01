@@ -66,8 +66,11 @@ def load_latent_grids_from_dir(directory: str, prefix: str = "latent_latent_grid
         grids.append(jnp.array(arr))
     return tuple(grids)
 
-
+# FLAG definitons
 FLAGS = flags.FLAGS
+flags.DEFINE_string("suffix_dir",'unspecified','Suffix to add to directory')
+flags.DEFINE_string("suffix_file","unknown","Suffix to add to directory")
+
 # print("LOADING FIXED LATENTS FROM:", os.getcwd())
 # print("FULL PATH:", os.path.abspath("./c3_neural_compression/latents/"))
 # fixed_latents = load_latent_grids_from_dir("./c3_neural_compression/latents/")
@@ -119,10 +122,10 @@ def downsample_rgb_image_to_match_latents(
 # image_02 is right, stereo
 
 fixed_latents = downsample_rgb_image_to_match_latents(
-    image_path="./c3_neural_compression/kitti/image_02/0000000000.png",
+    image_path="./c3_neural_compression/kitti/image_03/0000000000.png",
     num_grids=7,
     downsampling_factor=2.0,  # or (2.0, 2.0)
-    snr_db=20
+    
 )
 
 
@@ -712,6 +715,9 @@ class Experiment(base.Experiment):
     # else:
     #   # should write code for getting
     #   ...
+    DIRECTORY = f"./{FLAGS.suffix_dir}/"
+    os.makedirs(DIRECTORY)
+
     for i, input_dict in enumerate(self._train_data_iterator):
 
       #doing right
@@ -782,7 +788,7 @@ class Experiment(base.Experiment):
           print(f"RD point — rd_weight: {rd}, PSNR: {final_psnr:.4f}, BPP: {final_bpp:.6f}")
 
       print("SAVING INTO JSON.....")
-      with open('rd_curve_points.json','w') as f:
+      with open(f'{DIRECTORY}rd_curve_points_{FLAGS.suffix_file}.json','w') as f:
         json.dump(results, f, indent=2) 
 
 

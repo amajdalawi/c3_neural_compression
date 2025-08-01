@@ -39,8 +39,8 @@ def get_config() -> config_dict.ConfigDict:
   # Optimizer config. This optimizer is used to optimize a COOL-CHIC model for a
   # given image within the `step` method.
   exp.opt.grad_norm_clip = 1e-1
-  exp.opt.num_noise_steps = 200
-  exp.opt.max_num_ste_steps = 20
+  exp.opt.num_noise_steps = 20000
+  exp.opt.max_num_ste_steps = 1000
   # Optimization in the noise quantization regime uses a cosine decay learning
   # rate schedule
   exp.opt.cosine_decay_schedule = True
@@ -67,7 +67,7 @@ def get_config() -> config_dict.ConfigDict:
   exp.opt.ste_init_lr = 1e-4
   exp.opt.ste_break_at_lr = 1e-8
   # Frequency with which results are logged during optimization
-  exp.opt.noise_log_every = 100
+  exp.opt.noise_log_every = 1000
   exp.opt.ste_log_every = 50
 
   # Quantization
