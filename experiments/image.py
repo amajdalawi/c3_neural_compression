@@ -742,6 +742,15 @@ class Experiment(base.Experiment):
 
       # # Fit inputs_left of shape [H, W, C].
       # params = self.fit_datum(inputs_left, rng, save_location="./latents_left")
+      inputs = input_dict['array'].numpy()
+
+      input_shape = inputs.shape
+      num_pixels = self._num_pixels(input_res=input_shape[:-1])
+      logging.info('inputs shape: %s', input_shape)
+      logging.info('num_pixels: %s', num_pixels)
+
+      # Compute MACs per pixel.
+      macs_per_pixel = self._count_macs_per_pixel(input_shape)
 
       rd_weight_list = [0.0001, 0.00005, 0.00002]
       results = []
@@ -778,18 +787,9 @@ class Experiment(base.Experiment):
 
 
       # Extract image as array of shape [H, W, C]
-      inputs = input_dict['array'].numpy()
-
-      input_shape = inputs.shape
-      num_pixels = self._num_pixels(input_res=input_shape[:-1])
-      logging.info('inputs shape: %s', input_shape)
-      logging.info('num_pixels: %s', num_pixels)
-
-      # Compute MACs per pixel.
-      macs_per_pixel = self._count_macs_per_pixel(input_shape)
 
       # Fit inputs of shape [H, W, C].
-      params = self.fit_datum(inputs, rng)
+      # params = self.fit_datum(inputs, rng)
 
       # Compute MACs per pixel.
 
