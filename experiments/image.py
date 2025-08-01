@@ -24,6 +24,7 @@ import functools
 import textwrap
 import time
 
+from pathlib import Path
 from absl import app
 from absl import flags
 from absl import logging
@@ -716,7 +717,8 @@ class Experiment(base.Experiment):
     #   # should write code for getting
     #   ...
     DIRECTORY = f"./{FLAGS.suffix_dir}/"
-    os.makedirs(DIRECTORY)
+    if not Path(DIRECTORY).exists():
+      os.makedirs(DIRECTORY)
 
     for i, input_dict in enumerate(self._train_data_iterator):
 
@@ -758,9 +760,8 @@ class Experiment(base.Experiment):
       # Compute MACs per pixel.
       macs_per_pixel = self._count_macs_per_pixel(input_shape)
 
-      rd_weight_list = [0.0001, 0.00005, 0.00002]
+      rd_weight_list = [0.1, 0.2,0.3,0.01,0.05,0.07,0.005]
       results = []
-
       for rd in rd_weight_list:
           print(f"Training with rd_weight = {rd}")
           self.config.loss.rd_weight = rd
