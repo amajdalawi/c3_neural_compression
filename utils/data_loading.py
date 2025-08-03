@@ -564,3 +564,11 @@ def load_dataset(
   dl = data.DataLoader(ds, batch_size=None)
 
   return dl
+
+
+if __name__ == "__main__":
+  import jax.numpy as jnp
+  ds = load_dataset("kitti","../kitti/",num_examples=3)
+  for i in ds:
+    print(f"the shape is: {jnp.array(i['left'].numpy()).shape}")
+    print(f"The average value of the left image is: {jnp.mean(jnp.array(i['left'].numpy()), axis=(0,1))}")
