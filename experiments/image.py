@@ -71,6 +71,7 @@ def load_latent_grids_from_dir(directory: str, prefix: str = "latent_latent_grid
 FLAGS = flags.FLAGS
 flags.DEFINE_string("suffix_dir",'unspecified','Suffix to add to directory')
 flags.DEFINE_string("suffix_file","unknown","Suffix to add to directory")
+flags.DEFINE_string("directory_of_experiments",None, "Directory of the experiments")
 
 # print("LOADING FIXED LATENTS FROM:", os.getcwd())
 # print("FULL PATH:", os.path.abspath("./c3_neural_compression/latents/"))
@@ -126,7 +127,6 @@ fixed_latents = downsample_rgb_image_to_match_latents(
     image_path="./c3_neural_compression/kitti/image_03/0000000000.png",
     num_grids=7,
     downsampling_factor=2.0,  # or (2.0, 2.0)
-    
 )
 
 
@@ -720,7 +720,33 @@ class Experiment(base.Experiment):
     if not Path(DIRECTORY).exists():
       os.makedirs(DIRECTORY)
 
+
+
+
+    if FLAGS.directory_of_experiments is None:
+      print("NO EXPERIMENTS UP IN THIS BITCH")
+      os.makedirs("./experiments_final")
+      RESULTS_DIR = Path(f"./experiments_final/")
+      RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    else:
+      print("BRUHHHHHHH")
+      print(FLAGS.directory_of_experiments)
+      RESULTS_DIR = Path(f"./{FLAGS.directory_of_experiments}/")
+      RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    
+
+
+
+    rd_weight_list = [0.1, 0.2,0.3,0.01,0.05,0.07,0.005]
+
     for i, input_dict in enumerate(self._train_data_iterator):
+      print("trying this out...")
+
+      # ok so, the value of the _path is always relative to the path from teh main in shell
+      print(f"path of right is : {input_dict['right_path']}")
+      print(f"path of left is : {input_dict['left_path']}")
+      # always make sure that left is the main one, and its teh one with same (image_03), while the stereo is right (image_02)
 
       #doing right
       # print('doing right')
@@ -750,47 +776,175 @@ class Experiment(base.Experiment):
 
       # # Fit inputs_left of shape [H, W, C].
       # params = self.fit_datum(inputs_left, rng, save_location="./latents_left")
-      inputs = input_dict['array'].numpy()
 
-      input_shape = inputs.shape
-      num_pixels = self._num_pixels(input_res=input_shape[:-1])
-      logging.info('inputs shape: %s', input_shape)
-      logging.info('num_pixels: %s', num_pixels)
 
-      # Compute MACs per pixel.
-      macs_per_pixel = self._count_macs_per_pixel(input_shape)
+      # Helper to update one pair's JSON file
+      def update_result_json(pair_file: Path,
+                            lambda_val: float,
+                            category: str,
+                            psnr_list: list[float],
+                            bpp_list: list[float],
+                            rec_path: str):
+          lambda_key = str(lambda_val)
+          if pair_file.exists():
+              data = json.loads(pair_file.read_text(encoding="utf-8"))
+          else:
+              data = {}
+          data.setdefault(lambda_key, {})
+          data[lambda_key][category] = {
+              "psnr": psnr_list,
+              "bpp": bpp_list,
+              "avg_psnr": float(np.mean(psnr_list)),
+              "avg_bpp": float(np.mean(bpp_list)),
+              "rec_path": rec_path
+          }
+          pair_file.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
-      rd_weight_list = [0.1, 0.2,0.3,0.01,0.05,0.07,0.005]
-      results = []
-      for rd in rd_weight_list:
-          print(f"Training with rd_weight = {rd}")
-          self.config.loss.rd_weight = rd
+      # Loop over your data iterator
+      for i, input_dict in enumerate(self._train_data_iterator):
+          # Assign a human-readable pair ID
+          pair_id = f"pair_{i+1:02d}"
+          pair_file = RESULTS_DIR / f"{pair_id}.json"
 
-          # Train model
-          params = self.fit_datum(inputs, rng)
-
-          # Quantize model and evaluate
-          _, quantized_metrics = self.quantization_step_search(params, inputs)
-
+          inputs = input_dict['array'].numpy()
           num_pixels = np.prod(inputs.shape[:-1])
-          final_psnr = float(quantized_metrics["psnr"])
-          final_bpp = (
-              float(quantized_metrics["rate"]) +
-              float(quantized_metrics["synthesis"]) +
-              float(quantized_metrics["entropy"])
-          ) / num_pixels
+          logging.info('Processing %s, pixels=%s', pair_id, num_pixels)
 
-          results.append({
-              "rd_weight": rd,
-              "psnr": final_psnr,
-              "bpp": final_bpp
-          })
+          for rd in rd_weight_list:
+              print(f"=== rd_weight: {rd} ===")
+              self.config.loss.rd_weight = rd
 
-          print(f"RD point — rd_weight: {rd}, PSNR: {final_psnr:.4f}, BPP: {final_bpp:.6f}")
+              for category in ['baseline', 'same', 'stereo']:
+                  # Set fixed_latents depending on category
+                  if category == 'baseline':
+                      self.fixed_latents = None
+                  elif category == 'same':
+                      self.fixed_latents = downsample_rgb_image_to_match_latents(
+                          image_path=input_dict['left_path'],
+                          num_grids=7,
+                          downsampling_factor=2.0,
+                      )
+                  else:  # 'stereo'
+                      self.fixed_latents = downsample_rgb_image_to_match_latents(
+                          image_path=input_dict['right_path'],
+                          num_grids=7,
+                          downsampling_factor=2.0,
+                      )
 
-      print("SAVING INTO JSON.....")
-      with open(f'{DIRECTORY}rd_curve_points_{FLAGS.suffix_file}.json','w') as f:
-        json.dump(results, f, indent=2) 
+                  psnr_list, bpp_list = [], []
+                  rec_path: str = None
+
+                  # Run 5 trials
+                  for t in range(5):
+                          # 1) Refresh the *initialization* seed
+                      #    so model.init(...) gets new random weights.
+                      self.init_rng, init_seed = jax.random.split(self.init_rng)
+
+                      # 2) Refresh the *training* seed
+                      #    so noise quant & Adam rng is different.
+                      rng, train_seed = jax.random.split(rng)
+                      params = self.fit_datum(inputs, train_seed )
+                      _, metrics = self.quantization_step_search(params, inputs)
+
+                      final_psnr = float(metrics['psnr'])
+                      final_bpp = (
+                          float(metrics['rate']) +
+                          float(metrics['synthesis']) +
+                          float(metrics['entropy'])
+                      ) / num_pixels
+                      psnr_list.append(final_psnr)
+                      bpp_list.append(final_bpp)
+
+                      print(f"Trial {t+1}/5 — PSNR: {final_psnr:.4f}, BPP: {final_bpp:.6f}")
+
+                      # Save one reconstruction (first trial only)
+                      if t == 0:
+                          # Generate reconstruction via the forward pass
+                          rec, *_ = self.forward.apply(
+                              params=params,
+                              rng=None,
+                              quant_type='ste',
+                              input_res=inputs.shape[:-1]
+                          )
+                          rec_np = np.array(rec * 255.0).astype(np.uint8)
+                          save_dir = Path(f"./exp/{pair_id}/lambda_{rd}/{category}")
+                          save_dir.mkdir(parents=True, exist_ok=True)
+                          rec_path = save_dir / 'rec.png'
+                          Image.fromarray(rec_np).save(rec_path)
+
+                  # After 5 trials, update the JSON
+                  update_result_json(
+                      pair_file=pair_file,
+                      lambda_val=rd,
+                      category=category,
+                      psnr_list=psnr_list,
+                      bpp_list=bpp_list,
+                      rec_path=str(rec_path),
+                  )
+
+
+
+#       inputs = input_dict['array'].numpy()
+#       # inputs_left = input_dict['left'].numpy()
+#       # fixed_latents_right = ...
+#       # fixed_latents_left = ...
+#       input_shape = inputs.shape
+#       num_pixels = self._num_pixels(input_res=input_shape[:-1])
+#       logging.info('inputs shape: %s', input_shape)
+#       logging.info('num_pixels: %s', num_pixels)
+
+#       # Compute MACs per pixel.
+#       macs_per_pixel = self._count_macs_per_pixel(input_shape)
+
+#       results = []
+#       for rd in rd_weight_list:
+#           print(f"Training with rd_weight = {rd}")
+#           self.config.loss.rd_weight = rd
+
+
+
+#           for category in ['baseline','same','stereo']:
+#             if category == 'baseline':
+#               self.fixed_latents = None
+#             elif category == "same":
+#               self.fixed_latents = downsample_rgb_image_to_match_latents(
+#     image_path=input_dict['left_path'],
+#     num_grids=7,
+#     downsampling_factor=2.0,  # or (2.0, 2.0)
+#     )
+#             elif category == 'stereo':
+#               self.fixed_latents = downsample_rgb_image_to_match_latents(
+#     image_path=input_dict['right_path'],
+#     num_grids=7,
+#     downsampling_factor=2.0,  # or (2.0, 2.0)
+# ) 
+#             for _ in range(5):
+#               # Train model
+#               params = self.fit_datum(inputs, rng)
+
+#               # Quantize model and evaluate
+#               _, quantized_metrics = self.quantization_step_search(params, inputs)
+
+#               num_pixels = np.prod(inputs.shape[:-1])
+#               final_psnr = float(quantized_metrics["psnr"])
+#               final_bpp = (
+#                   float(quantized_metrics["rate"]) +
+#                   float(quantized_metrics["synthesis"]) +
+#                   float(quantized_metrics["entropy"])
+#               ) / num_pixels
+
+#               results.append({
+#                   "rd_weight": rd,
+#                   "psnr": final_psnr,
+#                   "bpp": final_bpp
+#               })
+
+#               print(f"RD point — rd_weight: {rd}, PSNR: {final_psnr:.4f}, BPP: {final_bpp:.6f}")
+
+
+#       print("SAVING INTO JSON.....")
+#       with open(f'{DIRECTORY}rd_curve_points_{FLAGS.suffix_file}.json','w') as f:
+#         json.dump(results, f, indent=2) 
 
 
       # Extract image as array of shape [H, W, C]

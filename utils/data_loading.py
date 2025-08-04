@@ -475,6 +475,8 @@ class KITTI2012Stereo(data.Dataset):
         return {
             'array': left_img,
             'left': left_img,
+            'left_path': left_path,
+            'right_path': right_path,
             'right': right_img
         }
 
