@@ -173,9 +173,11 @@ class Experiment(base.Experiment):
 
 
   def init_params(self, input_res, soft_round_temp=None, input_mean=None):
-    forward_init = jax.jit(
-        self.forward.init, static_argnames=('quant_type', 'input_res')
-    )
+    # forward_init = jax.jit(
+    #     self.forward.init, static_argnames=('quant_type', 'input_res')
+    # )
+
+    forward_init = self.forward.init
     params = forward_init(
         self.init_rng,
         quant_type=self.config.quant.noise_quant_type,
@@ -744,7 +746,7 @@ class Experiment(base.Experiment):
 
 
 
-    rd_weight_list = [0.1, 0.2,0.3,0.01,0.05,0.07,0.005]
+    rd_weight_list = [0.2, 0.1,0.01,0.05,0.005,0.003, 0.001, 0.0009, 0.007]
 
     for i, input_dict in enumerate(self._train_data_iterator):
       print("trying this out...")
@@ -841,7 +843,7 @@ class Experiment(base.Experiment):
                   rec_path: str = None
 
                   # Run 5 trials
-                  for t in range(5):
+                  for t in range(4):
                           # 1) Refresh the *initialization* seed
                       #    so model.init(...) gets new random weights.
                       self.init_rng, init_seed = jax.random.split(self.init_rng)
@@ -900,7 +902,6 @@ class Experiment(base.Experiment):
 #       logging.info('num_pixels: %s', num_pixels)
 
 #       # Compute MACs per pixel.
-#       macs_per_pixel = self._count_macs_per_pixel(input_shape)
 
 #       results = []
 #       for rd in rd_weight_list:
@@ -1007,8 +1008,8 @@ class Experiment(base.Experiment):
       metrics_per_datum['q_step_bias'].append(quantized_metrics['q_step_bias'])
 
       # Add macs per pixel metrics
-      for key, val in macs_per_pixel.items():
-        metrics_per_datum[f'macs_per_pixel_{key}'].append(val)
+      # for key, val in macs_per_pixel.items():
+      #   metrics_per_datum[f'macs_per_pixel_{key}'].append(val)
 
       # Log metrics for latest image
       logging_message = f'Train datum {i:05}: ' + str(
