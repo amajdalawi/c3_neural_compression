@@ -743,10 +743,13 @@ class Experiment(base.Experiment):
       RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     
+    for i, input_dict in enumerate(self._train_data_iterator):
+       print(f"this is {i} for the path {input_dict['left_path']}")
+    # return
 
 
-
-    rd_weight_list = [0.2, 0.1,0.01,0.05,0.005,0.003, 0.001, 0.0009, 0.007]
+    # rd_weight_list = [0.2, 0.1,0.01,0.05,0.005,0.003, 0.001, 0.0009, 0.007]
+    rd_weight_list = [0.2, 0.1,0.05,0.01, 0.007, 0.005,0.003, 0.001, 0.0009, 0.0003]
 
     for i, input_dict in enumerate(self._train_data_iterator):
       print("trying this out...")
@@ -809,8 +812,8 @@ class Experiment(base.Experiment):
           pair_file.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
       # Loop over your data iterator
+      # Main per-pair loop
       for i, input_dict in enumerate(self._train_data_iterator):
-          # Assign a human-readable pair ID
           pair_id = f"pair_{i+1:02d}"
           pair_file = RESULTS_DIR / f"{pair_id}.json"
 
@@ -823,7 +826,7 @@ class Experiment(base.Experiment):
               self.config.loss.rd_weight = rd
 
               for category in ['baseline', 'same', 'stereo']:
-                  # Set fixed_latents depending on category
+                  # Set fixed_latents
                   if category == 'baseline':
                       self.fixed_latents = None
                   elif category == 'same':
@@ -832,7 +835,7 @@ class Experiment(base.Experiment):
                           num_grids=7,
                           downsampling_factor=2.0,
                       )
-                  else:  # 'stereo'
+                  else:
                       self.fixed_latents = downsample_rgb_image_to_match_latents(
                           image_path=input_dict['right_path'],
                           num_grids=7,
@@ -840,47 +843,49 @@ class Experiment(base.Experiment):
                       )
 
                   psnr_list, bpp_list = [], []
-                  rec_path: str = None
+                  best_psnr = -np.inf
+                  best_params = None
 
-                  # Run 5 trials
-                  for t in range(4):
-                          # 1) Refresh the *initialization* seed
-                      #    so model.init(...) gets new random weights.
-                      self.init_rng, init_seed = jax.random.split(self.init_rng)
-
-                      # 2) Refresh the *training* seed
-                      #    so noise quant & Adam rng is different.
+                  # Run 5 trials and track best PSNR
+                  for t in range(2):
+                      # Re-seed init and train RNGs
+                      self.init_rng, _ = jax.random.split(self.init_rng)
                       rng, train_seed = jax.random.split(rng)
-                      params = self.fit_datum(inputs, train_seed )
+
+                      params = self.fit_datum(inputs, train_seed)
                       _, metrics = self.quantization_step_search(params, inputs)
 
-                      final_psnr = float(metrics['psnr'])
-                      final_bpp = (
+                      psnr = float(metrics['psnr'])
+                      bpp = (
                           float(metrics['rate']) +
                           float(metrics['synthesis']) +
                           float(metrics['entropy'])
                       ) / num_pixels
-                      psnr_list.append(final_psnr)
-                      bpp_list.append(final_bpp)
+                      psnr_list.append(psnr)
+                      bpp_list.append(bpp)
 
-                      print(f"Trial {t+1}/5 — PSNR: {final_psnr:.4f}, BPP: {final_bpp:.6f}")
+                      print(f"Trial {t+1}/3 ({category}) — PSNR: {psnr:.4f}, BPP: {bpp:.6f}")
 
-                      # Save one reconstruction (first trial only)
-                      if t == 0:
-                          # Generate reconstruction via the forward pass
-                          rec, *_ = self.forward.apply(
-                              params=params,
-                              rng=None,
-                              quant_type='ste',
-                              input_res=inputs.shape[:-1]
-                          )
-                          rec_np = np.array(rec * 255.0).astype(np.uint8)
-                          save_dir = RESULTS_DIR / pair_id / f"lambda_{rd}" / category
-                          save_dir.mkdir(parents=True, exist_ok=True)
-                          rec_path = save_dir / 'rec.png'
-                          Image.fromarray(rec_np).save(rec_path)
+                      # Save best parameters
+                      if psnr > best_psnr:
+                          best_psnr = psnr
+                          best_params = params
+                          best_bpp = bpp
 
-                  # After 5 trials, update the JSON
+                  # After trials, save reconstruction of best_params
+                  rec, *_ = self.forward.apply(
+                      params=best_params,
+                      rng=None,
+                      quant_type='ste',
+                      input_res=inputs.shape[:-1]
+                  )
+                  rec_np = np.array(rec * 255.0).astype(np.uint8)
+                  save_dir = RESULTS_DIR / pair_id / f"lambda_{rd}" / category
+                  save_dir.mkdir(parents=True, exist_ok=True)
+                  rec_path = save_dir / 'rec.png'
+                  Image.fromarray(rec_np).save(rec_path)
+
+                  # Update JSON for this (lambda, category)
                   update_result_json(
                       pair_file=pair_file,
                       lambda_val=rd,
