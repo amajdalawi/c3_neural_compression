@@ -115,6 +115,181 @@ def selective_causal_mask(kernel_shape, num_input_channels: int, masked_channel_
     return full_mask
 
 
+class AutoregressiveEntropyModelConvImageOriginal(
+    hk.Module, model_coding.QuantizableMixin
+):
+  """Convolutional autoregressive entropy model for COOL-CHIC. Image only.
+
+  This convolutional version is mathematically equivalent to its non-
+  convolutional counterpart but also supports explicit batch dimensions.
+  """
+
+  def __init__(
+      self,
+      conditional_spec: config_dict.ConfigDict,
+      layers: tuple[int, ...] = (12, 12),
+      activation_fn: str = 'gelu',
+      context_num_rows_cols: int | tuple[int, int] = 2,
+      shift_log_scale: float = 0.0,
+      scale_range: tuple[float, float] | None = None,
+      clip_like_cool_chic: bool = True,
+      use_linear_w_init: bool = True,
+  ):
+    """Constructor.
+
+    Args:
+      conditional_spec: Spec determining the type of conditioning to apply.
+      layers: Sizes of layers in the conv-net. Length of tuple corresponds to
+        depth of network.
+      activation_fn: Activation function of conv net.
+      context_num_rows_cols: Number of rows and columns to use as context for
+        autoregressive prediction. Can be an integer, in which case the number
+        of rows and columns is equal, or a tuple. The kernel size of the first
+        convolution is given by `2*context_num_rows_cols + 1` (in each
+        dimension).
+      shift_log_scale: Shift the `log_scale` by this amount before it is clipped
+        and exponentiated.
+      scale_range: Allowed range for scale of Laplace distribution. For example,
+        if scale_range = (1.0, 2.0), the scales are clipped to lie in [1.0,
+        2.0]. If `None` no clipping is applied.
+      clip_like_cool_chic: If True, clips scale in Laplace distribution in the
+        same way as it's done in COOL-CHIC codebase. This involves clipping a
+        transformed version of the log scale.
+      use_linear_w_init: Whether to initialise the convolutions as if they were
+        an MLP.
+    """
+    super().__init__()
+    self._layers = layers
+    self._activation_fn = getattr(jax.nn, activation_fn)
+    self._scale_range = scale_range
+    self._clip_like_cool_chic = clip_like_cool_chic
+    self._conditional_spec = conditional_spec
+    self._shift_log_scale = shift_log_scale
+    self._use_linear_w_init = use_linear_w_init
+
+    if isinstance(context_num_rows_cols, tuple):
+      self.context_num_rows_cols = context_num_rows_cols
+    else:
+      self.context_num_rows_cols = (context_num_rows_cols,) * 2
+    self.in_kernel_shape = tuple(2 * k + 1 for k in self.context_num_rows_cols)
+
+    mask, w_init = self._get_first_layer_mask_and_init()
+
+    net = []
+    net += [hk.Conv2D(
+        output_channels=layers[0],
+        kernel_shape=self.in_kernel_shape,
+        mask=mask,
+        w_init=w_init,
+        name='masked_layer_0',
+    ),]
+    for i, width in enumerate(layers[1:] + (2,)):
+      net += [
+          self._activation_fn,
+          hk.Conv2D(
+              output_channels=width,
+              kernel_shape=1,
+              name=f'layer_{i+1}',
+          ),
+      ]
+    self.net = hk.Sequential(net)
+
+  def _get_first_layer_mask_and_init(
+      self,
+  ) -> tuple[Array, Callable[[Any, Any], Array] | None]:
+    """Returns the mask and weight initialization of the first layer."""
+    if self._conditional_spec.use_conditioning:
+      if self._conditional_spec.use_prev_grid:
+        mask = layers_lib.get_prev_current_mask(
+            kernel_shape=self.in_kernel_shape,
+            prev_kernel_shape=self._conditional_spec.prev_kernel_shape,
+            f_out=self._layers[0],
+        )
+        w_init = None
+      else:
+        raise ValueError('Only use_prev_grid conditioning supported.')
+    else:
+      mask = causal_mask(
+          kernel_shape=self.in_kernel_shape, f_out=self._layers[0]
+      )
+      w_init = init_like_linear if self._use_linear_w_init else None
+    return mask, w_init
+
+  def _get_mask(
+      self,
+      dictkey: tuple[jax.tree_util.DictKey, ...],  # From `tree_map_with_path`.
+      array: Array,
+  ) -> Array:
+    assert isinstance(dictkey[0].key, str)
+    if 'masked_layer_0/w' in dictkey[0].key:
+      mask, _ = self._get_first_layer_mask_and_init()
+      return mask
+    else:
+      return np.ones(shape=array.shape, dtype=bool)
+
+  def __call__(self, latent_grids: tuple[Array, ...]) -> tuple[Array, Array]:
+    """Maps latent grids to parameters of Laplace distribution for every latent.
+
+    Args:
+      latent_grids: Tuple of all latent grids of shape (H, W), (H/2, W/2), etc.
+
+    Returns:
+      Tuple of parameters of Laplace distribution (loc and scale) each of shape
+      (num_latents,).
+    """
+
+    assert len(latent_grids[0].shape) in (2, 3)
+
+    if len(latent_grids[0].shape) == 3:
+      bs = latent_grids[0].shape[0]
+    else:
+      bs = None
+
+    if self._conditional_spec.use_conditioning:
+      if self._conditional_spec.use_prev_grid:
+        grids_cond = (jnp.zeros_like(latent_grids[0]),) + latent_grids[:-1]
+        dist_params = []
+        for prev_grid, grid in zip(grids_cond, latent_grids):
+          # Resize `prev_grid` to have the same resolution as the current grid
+          prev_grid_resized = jax.image.resize(
+              prev_grid,
+              shape=grid.shape,
+              method=self._conditional_spec.interpolation
+          )
+          inputs = jnp.stack(
+              [prev_grid_resized, grid], axis=-1
+          )  # (h[k], w[k], 2)
+          out = self.net(inputs)
+          dist_params.append(out)
+      else:
+        raise ValueError('use_prev_grid is False')
+    else:
+      # If not using conditioning, just apply the same network to each latent
+      # grid. Each element of dist_params has shape (h[k], w[k], 2).
+      dist_params = [self.net(g[..., None]) for g in latent_grids]
+
+    if bs is not None:
+      dist_params = [p.reshape(bs, -1, 2) for p in dist_params]
+      dist_params = jnp.concatenate(dist_params, axis=1)  # (bs, num_latents, 2)
+    else:
+      dist_params = [p.reshape(-1, 2) for p in dist_params]
+      dist_params = jnp.concatenate(dist_params, axis=0)  # (num_latents, 2)
+
+    assert dist_params.shape[-1] == 2
+    loc, log_scale = dist_params[..., 0], dist_params[..., 1]
+
+    log_scale = log_scale + self._shift_log_scale
+
+    # Optionally clip log scale (we clip scale in log space to avoid overflow).
+    if self._scale_range is not None:
+      log_scale = _clip_log_scale(
+          log_scale, self._scale_range, self._clip_like_cool_chic
+      )
+    # Convert log scale to scale (which ensures scale is positive)
+    scale = jnp.exp(log_scale)
+    return loc, scale
+
+
 
 
 class AutoregressiveEntropyModelConvImage(

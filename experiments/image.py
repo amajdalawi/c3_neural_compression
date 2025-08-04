@@ -122,12 +122,14 @@ def downsample_rgb_image_to_match_latents(
 
 # image_03 is left, same
 # image_02 is right, stereo
+# colored_0 is left
+# colored_1 is right
 
-fixed_latents = downsample_rgb_image_to_match_latents(
-    image_path="./c3_neural_compression/kitti/image_03/0000000000.png",
-    num_grids=7,
-    downsampling_factor=2.0,  # or (2.0, 2.0)
-)
+# fixed_latents = downsample_rgb_image_to_match_latents(
+#     image_path="./c3_neural_compression/kitti/image_03/0000000000.png",
+#     num_grids=7,
+#     downsampling_factor=2.0,  # or (2.0, 2.0)
+# )
 
 
 
@@ -193,8 +195,12 @@ class Experiment(base.Experiment):
 
   def _get_entropy_model(self):
     """Returns entropy model."""
-    return entropy_models.AutoregressiveEntropyModelConvImage(
-        **self.config.model.entropy, fixed_latents=fixed_latents
+    if self.fixed_latents is None:
+       return entropy_models.AutoregressiveEntropyModelConvImageOriginal(**self.config.model.entropy)
+    else:
+       
+      return entropy_models.AutoregressiveEntropyModelConvImage(
+        **self.config.model.entropy, fixed_latents=self.fixed_latents
     )
 
   def _get_entropy_params(self, latent_grids):
@@ -867,7 +873,7 @@ class Experiment(base.Experiment):
                               input_res=inputs.shape[:-1]
                           )
                           rec_np = np.array(rec * 255.0).astype(np.uint8)
-                          save_dir = Path(f"./exp/{pair_id}/lambda_{rd}/{category}")
+                          save_dir = RESULTS_DIR / pair_id / f"lambda_{rd}" / category
                           save_dir.mkdir(parents=True, exist_ok=True)
                           rec_path = save_dir / 'rec.png'
                           Image.fromarray(rec_np).save(rec_path)
