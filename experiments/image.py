@@ -23,7 +23,7 @@ from collections.abc import Mapping
 import functools
 import textwrap
 import time
-
+import re
 from pathlib import Path
 from absl import app
 from absl import flags
@@ -120,8 +120,8 @@ def downsample_rgb_image_to_match_latents(
 
     return tuple(outputs)
 
-# image_03 is left, same
-# image_02 is right, stereo
+# image_02 is left, same
+# image_03 is right, stereo
 # colored_0 is left
 # colored_1 is right
 
@@ -797,7 +797,12 @@ class Experiment(base.Experiment):
 
       # IMPORTANT: don't pre-iterate self._train_data_iterator before this; it will exhaust it.
       for i, input_dict in enumerate(self._train_data_iterator):
-          pair_id = f"pair_{i+1:02d}"
+          MAIN_KEY = 'left_path'   # or 'right_path' if that's your main
+          stem = Path(input_dict[MAIN_KEY]).stem   # e.g. "000050_10"
+          m = re.match(r'(\d+)', stem)
+          token = m.group(1) if m else stem        # "000050"
+          pair_id = f"pair_{token}"
+          # pair_id = f"pair_{i+1:02d}"
           pair_file = RESULTS_DIR / f"{pair_id}.json"
 
           inputs = input_dict['array'].numpy()
