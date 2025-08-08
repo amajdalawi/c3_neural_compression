@@ -445,6 +445,11 @@ class Experiment(base.Experiment):
 
     start = time.time()
 
+    # --- at top of fit_datum, after init_params(...) ---
+    history = {"iter": [], "psnr": [], "ssim": [], "bpp": []}
+    num_pixels = np.prod(inputs.shape[:-1])
+    # ---------------------------------------------------
+
     # Start training with (typically) noise quantization for `num_noise_steps`.
     # This uses adam with cosine decay schedule.
     quant_type = self.config.quant.noise_quant_type
@@ -478,6 +483,12 @@ class Experiment(base.Experiment):
       # if i % 20:
       #   print("bruh")
 
+      if i % 100 == 0:
+        eval_m = self.eval(params, inputs, blocked_rates=False)  # rounding
+        history["iter"].append(int(i))
+        history["psnr"].append(float(eval_m["psnr"]))
+        history["ssim"].append(float(eval_m["ssim"]))
+        history["bpp"].append(float(eval_m["rate"]) / num_pixels)  # NOTE: latents-only bpp here
       with jax.default_device(jax.local_devices(backend='cpu')[0]):
         rng, rng_used = jax.random.split(rng)
 
@@ -533,6 +544,13 @@ class Experiment(base.Experiment):
       learning_rate = self.config.opt.ste_init_lr
       rd_weight = self.config.loss.rd_weight  # To satisfy linter
       for i in range(self.config.opt.max_num_ste_steps):
+        if i % 100 == 0:
+          eval_m = self.eval(params, inputs, blocked_rates=False)
+          hist_i = int(self.config.opt.num_noise_steps + i)
+          history["iter"].append(hist_i)
+          history["psnr"].append(float(eval_m["psnr"]))
+          history["ssim"].append(float(eval_m["ssim"]))
+          history["bpp"].append(float(eval_m["rate"]) / num_pixels)
         if self.config.opt.ste_uses_cosine_decay:
           # STE continues to use cosine decay lr schedule
           params, opt_state, train_metrics = self.single_train_step(
@@ -603,7 +621,7 @@ class Experiment(base.Experiment):
               * self.config.opt.cosine_decay_schedule_kwargs.init_value
           ),
       )
-    return params
+    return params, history
 
   def _quantize_network_params(
       self, q_step_weight: float, q_step_bias: float
@@ -744,75 +762,40 @@ class Experiment(base.Experiment):
 
     
     for i, input_dict in enumerate(self._train_data_iterator):
-       print(f"this is {i} for the path {input_dict['left_path']}")
+      print(f"this is {i} for the path {input_dict['left_path']}")
     # return
 
 
-    # rd_weight_list = [0.2, 0.1,0.01,0.05,0.005,0.003, 0.001, 0.0009, 0.007]
-    rd_weight_list = [0.2, 0.1,0.05,0.01, 0.007, 0.005,0.003, 0.001, 0.0009, 0.0003]
+        # rd_weight_list = [0.2, 0.1,0.01,0.05,0.005,0.003, 0.001, 0.0009, 0.007]
+      rd_weight_list = [0.1, 0.05, 0.01, 0.007, 0.005, 0.003, 0.001, 0.0009, 0.0003]
+      categories = ['baseline', 'stereo']   # add 'same' if you want it too
+      num_trials = 2
 
-    for i, input_dict in enumerate(self._train_data_iterator):
-      print("trying this out...")
-
-      # ok so, the value of the _path is always relative to the path from teh main in shell
-      print(f"path of right is : {input_dict['right_path']}")
-      print(f"path of left is : {input_dict['left_path']}")
-      # always make sure that left is the main one, and its teh one with same (image_03), while the stereo is right (image_02)
-
-      #doing right
-      # print('doing right')
-      # inputs_right = input_dict['right'].numpy()
-
-      # inputs_shape_right = inputs_right.shape
-      # num_pixels = self._num_pixels(input_res=inputs_shape_right[:-1])
-      # logging.info('inputs_right shape: %s', inputs_shape_right)
-      # logging.info('num_pixels: %s', num_pixels)
-
-      # # Compute MACs per pixel.
-      # macs_per_pixel = self._count_macs_per_pixel(inputs_shape_right)
-
-      # # Fit inputs_right of shape [H, W, C].
-      # params = self.fit_datum(inputs_right, rng, save_location="./latents_right")
-
-
-      # # left
-      # print("doing left...")
-      # inputs_left = input_dict['left'].numpy()
-
-      # inputs_shape_left = inputs_left.shape
-      # num_pixels = self._num_pixels(input_res=inputs_shape_left[:-1])
-      # logging.info('inputs_left shape: %s', inputs_shape_left)
-      # logging.info('num_pixels: %s', num_pixels)
-      # macs_per_pixel = self._count_macs_per_pixel(inputs_shape_left)
-
-      # # Fit inputs_left of shape [H, W, C].
-      # params = self.fit_datum(inputs_left, rng, save_location="./latents_left")
-
-
-      # Helper to update one pair's JSON file
       def update_result_json(pair_file: Path,
                             lambda_val: float,
                             category: str,
                             psnr_list: list[float],
                             bpp_list: list[float],
-                            rec_path: str):
-          lambda_key = str(lambda_val)
+                            ssim_list: list[float],
+                            rec_paths: list[str]):
+          key = str(lambda_val)
           if pair_file.exists():
               data = json.loads(pair_file.read_text(encoding="utf-8"))
           else:
               data = {}
-          data.setdefault(lambda_key, {})
-          data[lambda_key][category] = {
+          data.setdefault(key, {})
+          data[key][category] = {
               "psnr": psnr_list,
               "bpp": bpp_list,
-              "avg_psnr": float(np.mean(psnr_list)),
-              "avg_bpp": float(np.mean(bpp_list)),
-              "rec_path": rec_path
+              "ssim": ssim_list,
+              "avg_psnr": float(np.mean(psnr_list)) if psnr_list else None,
+              "avg_bpp":  float(np.mean(bpp_list))  if bpp_list else None,
+              "avg_ssim": float(np.mean(ssim_list)) if ssim_list else None,
+              "rec_paths": rec_paths
           }
           pair_file.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
-      # Loop over your data iterator
-      # Main per-pair loop
+      # IMPORTANT: don't pre-iterate self._train_data_iterator before this; it will exhaust it.
       for i, input_dict in enumerate(self._train_data_iterator):
           pair_id = f"pair_{i+1:02d}"
           pair_file = RESULTS_DIR / f"{pair_id}.json"
@@ -825,76 +808,70 @@ class Experiment(base.Experiment):
               print(f"=== rd_weight: {rd} ===")
               self.config.loss.rd_weight = rd
 
-              for category in ['baseline', 'same', 'stereo']:
-                  # Set fixed_latents
+              for category in categories:
+                  # Select fixed_latents
                   if category == 'baseline':
                       self.fixed_latents = None
                   elif category == 'same':
                       self.fixed_latents = downsample_rgb_image_to_match_latents(
-                          image_path=input_dict['left_path'],
-                          num_grids=7,
-                          downsampling_factor=2.0,
+                          image_path=input_dict['left_path'], num_grids=7, downsampling_factor=2.0
                       )
-                  else:
+                  else:  # 'stereo'
                       self.fixed_latents = downsample_rgb_image_to_match_latents(
-                          image_path=input_dict['right_path'],
-                          num_grids=7,
-                          downsampling_factor=2.0,
+                          image_path=input_dict['right_path'], num_grids=7, downsampling_factor=2.0
                       )
 
-                  psnr_list, bpp_list = [], []
-                  best_psnr = -np.inf
-                  best_params = None
+                  psnr_list, bpp_list, ssim_list = [], [], []
+                  rec_paths = []
 
-                  # Run 5 trials and track best PSNR
-                  for t in range(2):
-                      # Re-seed init and train RNGs
+                  for t in range(num_trials):
+                      # fresh seeds
                       self.init_rng, _ = jax.random.split(self.init_rng)
                       rng, train_seed = jax.random.split(rng)
 
-                      params = self.fit_datum(inputs, train_seed)
+                      # 1) Train once; collect training curves every 100 iters
+                      params, history = self.fit_datum(inputs, train_seed)
+
+                      # 2) Save the evolution curve for THIS trial
+                      trial_dir = RESULTS_DIR / pair_id / f"lambda_{rd}" / category / f"trial_{t+1}"
+                      trial_dir.mkdir(parents=True, exist_ok=True)
+                      with open(trial_dir / 'curve.json', 'w') as fh:
+                          json.dump(history, fh, indent=2)
+
+                      # 3) Quantize & evaluate final metrics (PSNR, SSIM, TOTAL BPP)
                       _, metrics = self.quantization_step_search(params, inputs)
-
                       psnr = float(metrics['psnr'])
-                      bpp = (
-                          float(metrics['rate']) +
-                          float(metrics['synthesis']) +
-                          float(metrics['entropy'])
+                      ssim = float(metrics['ssim'])
+                      bpp_total = (
+                          float(metrics['rate']) + float(metrics['synthesis']) + float(metrics['entropy'])
                       ) / num_pixels
+
                       psnr_list.append(psnr)
-                      bpp_list.append(bpp)
+                      ssim_list.append(ssim)
+                      bpp_list.append(bpp_total)
 
-                      print(f"Trial {t+1}/3 ({category}) — PSNR: {psnr:.4f}, BPP: {bpp:.6f}")
+                      print(f"Trial {t+1}/{num_trials} ({category}) — "
+                            f"PSNR: {psnr:.4f}, SSIM: {ssim:.5f}, BPP: {bpp_total:.6f}")
 
-                      # Save best parameters
-                      if psnr > best_psnr:
-                          best_psnr = psnr
-                          best_params = params
-                          best_bpp = bpp
+                      # 4) Save reconstruction for THIS trial
+                      rec, *_ = self.forward.apply(
+                          params=params, rng=None, quant_type='ste', input_res=inputs.shape[:-1]
+                      )
+                      rec_np = np.array(np.clip(rec * 255.0, 0, 255)).astype(np.uint8)
+                      rec_path = trial_dir / 'rec.png'
+                      Image.fromarray(rec_np).save(rec_path)
+                      rec_paths.append(str(rec_path))
 
-                  # After trials, save reconstruction of best_params
-                  rec, *_ = self.forward.apply(
-                      params=best_params,
-                      rng=None,
-                      quant_type='ste',
-                      input_res=inputs.shape[:-1]
-                  )
-                  rec_np = np.array(rec * 255.0).astype(np.uint8)
-                  save_dir = RESULTS_DIR / pair_id / f"lambda_{rd}" / category
-                  save_dir.mkdir(parents=True, exist_ok=True)
-                  rec_path = save_dir / 'rec.png'
-                  Image.fromarray(rec_np).save(rec_path)
-
-                  # Update JSON for this (lambda, category)
+                  # 5) Update per-pair JSON with lists + averages + rec paths
                   update_result_json(
                       pair_file=pair_file,
                       lambda_val=rd,
                       category=category,
                       psnr_list=psnr_list,
                       bpp_list=bpp_list,
-                      rec_path=str(rec_path),
+                      ssim_list=ssim_list,
+                      rec_paths=rec_paths,
                   )
-
 
 
 #       inputs = input_dict['array'].numpy()
