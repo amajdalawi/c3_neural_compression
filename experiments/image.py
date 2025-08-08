@@ -767,7 +767,7 @@ class Experiment(base.Experiment):
 
 
         # rd_weight_list = [0.2, 0.1,0.01,0.05,0.005,0.003, 0.001, 0.0009, 0.007]
-      rd_weight_list = [0.1, 0.05, 0.01, 0.007, 0.005, 0.003, 0.001, 0.0009, 0.0003]
+      rd_weight_list = [0.1, 0.05, 0.01, 0.007, 0.005, 0.003, 0.001, 0.0006, 0.0003]
       categories = ['baseline', 'stereo']   # add 'same' if you want it too
       num_trials = 2
 
