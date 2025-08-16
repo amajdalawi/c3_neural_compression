@@ -30,7 +30,7 @@ def get_config() -> config_dict.ConfigDict:
   exp.dataset.name = 'kitti'
   # Make sure root_dir matches the directory where data files are stored.
   exp.dataset.root_dir = r'./c3_neural_compression/kitti/'
-  exp.dataset.skip_examples = 0
+  exp.dataset.skip_examples = 22
   exp.dataset.num_examples = None  # Set this to None to train on whole dataset.
   exp.dataset.num_frames = None
   exp.dataset.spatial_patch_size = None
@@ -68,7 +68,7 @@ def get_config() -> config_dict.ConfigDict:
   exp.opt.ste_break_at_lr = 1e-8
   # Frequency with which results are logged during optimization
   exp.opt.noise_log_every = 1000
-  exp.opt.ste_log_every = 50
+  exp.opt.ste_log_every = 200
 
   # Quantization
   # Noise regime

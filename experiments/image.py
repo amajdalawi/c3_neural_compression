@@ -804,7 +804,8 @@ class Experiment(base.Experiment):
           pair_id = f"pair_{token}"
           # pair_id = f"pair_{i+1:02d}"
           pair_file = RESULTS_DIR / f"{pair_id}.json"
-
+          print("PATHS OF FILES: #########")
+          print(f"Path of left file is {input_dict['left_path']}, and path of right file is: {input_dict['right_path']}")
           inputs = input_dict['array'].numpy()
           num_pixels = np.prod(inputs.shape[:-1])
           logging.info('Processing %s, pixels=%s', pair_id, num_pixels)
