@@ -23,8 +23,8 @@ import time
 import json
 
 from pathlib import Path
-
-
+from PIL import Image
+from ml_collections import config_dict
 from absl import app
 from absl import flags
 from absl import logging
@@ -100,9 +100,28 @@ class Experiment(base.Experiment):
     # return entropy_models.AutoregressiveEntropyModelConvImage(
     #   **self.config.model.entropy,fixed_latents=getattr(self, "_fixed_latents", None),)
     # If self._fixed_latents exists (after LEFT training), pass them to entropy model.
+    # return entropy_models.AutoregressiveEntropyModelConvImage(
+    #     **self.config.model.entropy,
+    #     fixed_latents=getattr(self, "_fixed_latents", None)
+    # )
+    # Decide conditioning per run:
+    #   - baseline: force OFF
+    #   - stereo (fixed-latents): force ON with prev_grid False
+    #   - default: use config
+    cond = config_dict.ConfigDict(self.config.model.entropy.conditional_spec)
+    mode = getattr(self, "_conditioning_mode", "auto")
+    if mode == "off":
+      cond.use_conditioning = False
+    elif mode == "fixed":
+      cond.use_conditioning = True
+      cond.use_prev_grid = False
+    # else: auto -> leave cond as-is
+
     return entropy_models.AutoregressiveEntropyModelConvImage(
-        **self.config.model.entropy,
-        fixed_latents=getattr(self, "_fixed_latents", None)
+        conditional_spec=cond,
+        **{k: v for k, v in self.config.model.entropy.items() if k != "conditional_spec"},
+        fixed_latents=(getattr(self, "_fixed_latents", None)
+                       if mode == "fixed" else None),
     )
 
   def _get_entropy_params(self, latent_grids):
@@ -676,9 +695,18 @@ class Experiment(base.Experiment):
       for rdw in RD_WEIGHTS:
         rd_dir = iter_root / str(rdw)
 
+        # # -------- Baseline: train RIGHT without side info --------
+        # if hasattr(self, "_fixed_latents"):
+        #   delattr(self, "_fixed_latents")  # ensure no conditioning
+
+
         # -------- Baseline: train RIGHT without side info --------
+        # Ensure no conditioning:
         if hasattr(self, "_fixed_latents"):
-          delattr(self, "_fixed_latents")  # ensure no conditioning
+          delattr(self, "_fixed_latents")
+        self._conditioning_mode = "off"
+
+
         params_baseline = self._train_right_with_rd(right_np, rng, rd_weight=rdw)
         baseline_dir = rd_dir / "baseline"
         m_base = self._eval_and_save(params_baseline, right_np, baseline_dir)
@@ -691,6 +719,7 @@ class Experiment(base.Experiment):
             left_params, input_res=left_np.shape[:-1]
         )
         # Train right with fixed latents
+        self._conditioning_mode = "fixed"
         params_stereo = self._train_right_with_rd(right_np, rng, rd_weight=rdw)
         stereo_dir = rd_dir / "stereo"
         m_stereo = self._eval_and_save(params_stereo, right_np, stereo_dir)
@@ -704,6 +733,8 @@ class Experiment(base.Experiment):
         # Clean up to avoid leaking fixed latents to next lambda
         if hasattr(self, "_fixed_latents"):
           delattr(self, "_fixed_latents")
+        if hasattr(self, "_conditioning_mode"):
+          delattr(self, "_conditioning_mode")
 
       # Write per-iterator JSON file
       with open(iter_root / "metrics.json", "w") as f:

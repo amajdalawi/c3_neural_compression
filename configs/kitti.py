@@ -145,7 +145,7 @@ def get_config() -> config_dict.ConfigDict:
   exp.model.entropy.conditional_spec.use_conditioning = True
   # Whether to condition the entropy model on the previous grid. If this is
   # `True`, the parameter `conditional_spec.prev_kernel_shape` should be set.
-  exp.model.entropy.conditional_spec.use_prev_grid = True
+  exp.model.entropy.conditional_spec.use_prev_grid = False
   exp.model.entropy.conditional_spec.interpolation = 'bilinear'
   exp.model.entropy.conditional_spec.prev_kernel_shape = (7, 7)
 
