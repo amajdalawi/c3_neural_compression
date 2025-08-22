@@ -89,7 +89,7 @@ def get_config() -> config_dict.ConfigDict:
 
   # Loss config
   # Rate-distortion weight used in loss (corresponds to lambda in paper)
-  exp.loss.rd_weight = 0.005
+  exp.loss.rd_weight = 0.1
   # Use rd_weight warmup for the noise steps. 0 means no warmup is used.
   exp.loss.rd_weight_warmup_steps = 0
 
@@ -132,7 +132,7 @@ def get_config() -> config_dict.ConfigDict:
   )
 
   # Entropy model
-  exp.model.entropy.layers = (18, 18)
+  exp.model.entropy.layers = (18, 30, 18)
   exp.model.entropy.context_num_rows_cols = (7, 7)
   exp.model.entropy.activation_fn = 'gelu'
   exp.model.entropy.scale_range = (1e-3, 150)
