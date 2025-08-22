@@ -30,8 +30,8 @@ def get_config() -> config_dict.ConfigDict:
   exp.dataset.name = 'kitti'
   # Make sure root_dir matches the directory where data files are stored.
   exp.dataset.root_dir = r'./c3_neural_compression/kitti/'
-  exp.dataset.skip_examples = 0
-  exp.dataset.num_examples = None  # Set this to None to train on whole dataset.
+  exp.dataset.skip_examples = 1
+  exp.dataset.num_examples = 1  # Set this to None to train on whole dataset.
   exp.dataset.num_frames = None
   exp.dataset.spatial_patch_size = None
   exp.dataset.video_idx = None
@@ -89,7 +89,7 @@ def get_config() -> config_dict.ConfigDict:
 
   # Loss config
   # Rate-distortion weight used in loss (corresponds to lambda in paper)
-  exp.loss.rd_weight = 0.0004
+  exp.loss.rd_weight = 0.005
   # Use rd_weight warmup for the noise steps. 0 means no warmup is used.
   exp.loss.rd_weight_warmup_steps = 0
 
@@ -145,7 +145,7 @@ def get_config() -> config_dict.ConfigDict:
   exp.model.entropy.conditional_spec.use_conditioning = True
   # Whether to condition the entropy model on the previous grid. If this is
   # `True`, the parameter `conditional_spec.prev_kernel_shape` should be set.
-  exp.model.entropy.conditional_spec.use_prev_grid = False
+  exp.model.entropy.conditional_spec.use_prev_grid = True
   exp.model.entropy.conditional_spec.interpolation = 'bilinear'
   exp.model.entropy.conditional_spec.prev_kernel_shape = (7, 7)
 

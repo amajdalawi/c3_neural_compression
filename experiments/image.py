@@ -607,7 +607,7 @@ class Experiment(base.Experiment):
     for i, input_dict in enumerate(self._train_data_iterator):
       # Extract image as array of shape [H, W, C]
       # inputs = input_dict['right'].numpy()
-      +      # 1) Train LEFT view first and extract its trained latent grids.
+      # 1) Train LEFT view first and extract its trained latent grids.
       #    The loader provides both 'left' and 'right' entries.
       left_np = input_dict['left'].numpy()
       right_np = input_dict['right'].numpy()
@@ -634,6 +634,10 @@ class Experiment(base.Experiment):
       # Fit inputs of shape [H, W, C].
       params = self.fit_datum(inputs, rng)
 
+
+      
+      if hasattr(self, "_fixed_latents"):
+        delattr(self, "_fixed_latents")
       # Evaluate unquantized model after training. Note that this will *not*
       # include model parameters in rate calculations.
       metrics = self.eval(params, inputs, blocked_rates=True)
