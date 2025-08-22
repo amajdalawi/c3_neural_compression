@@ -32,6 +32,14 @@ import tqdm
 
 
 DATASET_ATTRIBUTES = {
+    'kitti': { 'num_channels': 3,
+        # H x W
+        'resolution': (1242, 375),
+        'type': 'image',
+        'train_size': 1,
+        'test_size': 1,
+
+    },
     'clic2020': {
         'num_channels': 3,
         'resolution': None,  # Resolution varies by image
@@ -67,6 +75,13 @@ DATASET_ATTRIBUTES = {
         'train_size': 6 * 600 + 300,  # total number of frames
         'test_size': 6 * 600 + 300,  # total number of frames
     },
+    'KiTTi':{
+      'num_channels': 3,
+      'resolution': (1242, 375),
+      'type': 'image',
+      'train_size': 1,
+      'test_size': 1,
+    }
 }
 
 
@@ -146,6 +161,59 @@ class Kodak(data.Dataset):
       image = self.transform(image)
 
     return {'array': image}
+
+class KiTTi(data.Dataset):
+  "Data downloadable from idk where"
+
+  def __init__(
+      self,
+      root: str,
+      force_download: bool = False,
+      transform: Callable[[Any], torch.Tensor] | None = None,
+  ):
+    """Constructor.
+
+    Args:
+        root: base directory for downloading dataset. Directory is created if it
+          does not already exist.
+        force_download: if False, only downloads the dataset if it doesn't
+          already exist. If True, force downloads the dataset into the root,
+          overwriting existing files.
+        transform: callable for transforming the loaded images.
+    """
+    self.root = root
+    self.transform = transform
+    self.num_images = 24
+
+    self.path_list = [
+        os.path.join(self.root, 'kodim{:02}.png'.format(i))
+        for i in range(1, self.num_images + 1)  # Kodak images start at 1
+    ]
+
+    if force_download:
+      self._download()
+    else:
+      # Check if root directory exists
+      if os.path.exists(self.root):
+        # Check that there is a correct number of png files.
+        download_files = False
+        count = 0
+        for filename in os.listdir(self.root):
+          if filename.endswith('.png'):
+            count += 1
+        if count != self.num_images:
+          print('Files are missing, so proceed with download.')
+          download_files = True
+      else:
+        os.makedirs(self.root)
+        download_files = True
+
+      if download_files:
+        self._download()
+      else:
+        print(
+            'Files already exist and `force_download=False`, so do not download'
+        )
 
 
 class CLIC2020(data.Dataset):
@@ -354,7 +422,65 @@ class UVG(data.Dataset):
   def __len__(self) -> int:
     return np.prod(self.num_patches)
 
+  
+import os
+import torch
+from torch.utils import data
+from torchvision.datasets import folder
+from typing import Callable, Any
+import glob
 
+
+class KITTI2012Stereo(data.Dataset):
+    """Dataset loader for KITTI 2012 stereo image pairs."""
+
+    def __init__(
+        self,
+        root: str,
+        transform: Callable[[Any], torch.Tensor] | None = None,
+    ):
+        """
+        Args:
+            root: Base directory containing 'image_02' and 'image_03' folders.
+            transform: Callable for transforming the loaded images.
+        """
+        self.root = root
+        self.transform = transform
+
+        # Paths to image_02 (left) and image_03 (right)
+        self.left_dir = os.path.join(root, 'image_02')
+        self.right_dir = os.path.join(root, 'image_03')
+
+        # Collect all filenames (assumes .png files sorted alphabetically)
+        self.left_images = sorted(glob.glob(os.path.join(self.left_dir, '*.png')))
+        self.right_images = sorted(glob.glob(os.path.join(self.right_dir, '*.png')))
+
+        assert len(self.left_images) == len(self.right_images), \
+            f"Mismatch between left ({len(self.left_images)}) and right ({len(self.right_images)}) images"
+
+    def __len__(self):
+        return len(self.left_images)
+
+    def __getitem__(self, idx):
+        left_path = self.left_images[idx]
+        right_path = self.right_images[idx]
+
+        left_img = folder.default_loader(left_path)
+        right_img = folder.default_loader(right_path)
+
+        if self.transform:
+            left_img = self.transform(left_img)
+            right_img = self.transform(right_img)
+
+        return {
+            'array': left_img,
+            'left': left_img,
+            'left_path': left_path,
+            'right_path': right_path,
+            'right': right_img
+        }
+
+  
 def load_dataset(
     dataset_name: str,
     root: str,
@@ -394,6 +520,8 @@ def load_dataset(
   ])
 
   # Load dataset
+
+
   if dataset_name.startswith('uvg'):
     patch_size = (num_frames, *spatial_patch_size)
     ds = UVG(
@@ -418,9 +546,13 @@ def load_dataset(
     ds = CLIC2020(root=root, transform=transform)
     start_idx = 0
     end_idx = ds.num_images
+  elif dataset_name.startswith('kitti'):
+    ds = KITTI2012Stereo(root=root, transform=transform)
+    start_idx = 0
+    end_idx = len(ds)
   else:
     raise ValueError(f'Unrecognized dataset {dataset_name}.')
-
+  
   # Adjust start_idx and end_idx based on skip_examples and num_examples
   if skip_examples is not None:
     start_idx = start_idx + skip_examples
@@ -434,3 +566,11 @@ def load_dataset(
   dl = data.DataLoader(ds, batch_size=None)
 
   return dl
+
+
+if __name__ == "__main__":
+  import jax.numpy as jnp
+  ds = load_dataset("kitti","../kitti/",num_examples=3)
+  for i in ds:
+    print(f"the shape is: {jnp.array(i['left'].numpy()).shape}")
+    print(f"The average value of the left image is: {jnp.mean(jnp.array(i['left'].numpy()), axis=(0,1))}")
