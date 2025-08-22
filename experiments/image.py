@@ -20,6 +20,10 @@ from collections.abc import Mapping
 import functools
 import textwrap
 import time
+import json
+
+from pathlib import Path
+
 
 from absl import app
 from absl import flags
@@ -41,7 +45,8 @@ from c3_neural_compression.utils import psnr as psnr_utils
 
 
 Array = chex.Array
-
+RD_WEIGHTS = [0.2, 0.1, 0.01, 0.05, 0.005, 0.003, 0.001, 0.0009, 0.007]
+OUTPUT_ROOT = Path("./outputs_stereo_vs_baseline")
 FLAGS = flags.FLAGS
 
 
@@ -92,8 +97,13 @@ class Experiment(base.Experiment):
     #     **self.config.model.entropy,
     # )
     # If fixed latents (from the LEFT image) are available, pass them in.
+    # return entropy_models.AutoregressiveEntropyModelConvImage(
+    #   **self.config.model.entropy,fixed_latents=getattr(self, "_fixed_latents", None),)
+    # If self._fixed_latents exists (after LEFT training), pass them to entropy model.
     return entropy_models.AutoregressiveEntropyModelConvImage(
-      **self.config.model.entropy,fixed_latents=getattr(self, "_fixed_latents", None),)
+        **self.config.model.entropy,
+        fixed_latents=getattr(self, "_fixed_latents", None)
+    )
 
   def _get_entropy_params(self, latent_grids):
     """Returns parameters of autoregressive Laplace distribution."""
@@ -315,6 +325,55 @@ class Experiment(base.Experiment):
     logging_message += f' time={(delta_time):.4f}.'
     logging_message = textwrap.fill(logging_message, 80)
     logging.info(logging_message)
+
+  def _extract_latent_grids_from_params(self, params: hk.Params, input_res: tuple[int, int]):
+    """Run a no-noise forward to fetch trained latent grids (LEFT)."""
+    rec, latent_grids, *_ = self.forward.apply(
+        params=params,
+        rng=None,
+        quant_type='ste',
+        input_res=input_res,
+        soft_round_temp=None,
+        input_mean=None,
+        kumaraswamy_a=None,
+    )
+    return tuple(jnp.array(g) for g in latent_grids)
+
+  def _save_reconstruction_png(self, arr_hw3: jnp.ndarray, path: Path):
+    """Save HxWxC float in [0,1] as PNG."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img = (np.clip(np.array(arr_hw3), 0.0, 1.0) * 255.0).astype(np.uint8)
+    Image.fromarray(img).save(path)
+
+  def _eval_and_save(self, params: hk.Params, target: np.ndarray, out_dir: Path):
+    """Evaluate (PSNR/SSIM/BPP), save reconstruction PNG (rounded), and return metrics."""
+    # Eval computes distortion on rounded rec; also returns total rate.
+    metrics = self.eval(params, target)
+    # Reconstruct (rounded to match eval):
+    rec, *_ = self.forward.apply(params=params, rng=None, quant_type='ste',
+                                 input_res=target.shape[:-1])
+    rec = jnp.round(rec * 255.) / 255.
+    self._save_reconstruction_png(rec, out_dir / "reconstruction" / "rec.png")
+    # Compute bpp = rate / num_pixels
+    num_pixels = self._num_pixels(target.shape[:-1])
+    bpp = float(metrics["rate"] / num_pixels)
+    return {
+      "psnr": float(psnr_utils.psnr_fn(metrics["distortion"])),
+      "ssim": float(metrics["ssim"]),
+      "bpp": bpp,
+    }
+
+  def _train_right_with_rd(self, right_np: np.ndarray, rng, rd_weight: float):
+    """Train right image with a specific rd_weight by temporarily overriding config."""
+    old = self.config.loss.rd_weight
+    self.config.loss.rd_weight = rd_weight
+    try:
+      params = self.fit_datum(right_np, rng)
+    finally:
+      self.config.loss.rd_weight = old
+    return params
+
+
 
   def fit_datum(self, inputs, rng):
     # Move input to the GPU (or other existing device). Otherwise it gets
@@ -604,95 +663,140 @@ class Experiment(base.Experiment):
     # Fit each image and log metrics pre/post model quantization per image.
     metrics_per_datum = collections.defaultdict(list)
 
+
     for i, input_dict in enumerate(self._train_data_iterator):
-      # Extract image as array of shape [H, W, C]
-      # inputs = input_dict['right'].numpy()
-      # 1) Train LEFT view first and extract its trained latent grids.
-      #    The loader provides both 'left' and 'right' entries.
-      left_np = input_dict['left'].numpy()
-      right_np = input_dict['right'].numpy()
+      # Get stereo pair
+      left_np = input_dict["left"].numpy()
+      right_np = input_dict["right"].numpy()
+      iter_root = OUTPUT_ROOT / str(i)
+      iter_root.mkdir(parents=True, exist_ok=True)
+      iter_metrics = {}
 
-      # Train LEFT
-      left_shape = left_np.shape
-      _ = self._count_macs_per_pixel(left_shape)
-      left_params = self.fit_datum(left_np, rng)
-      # Extract LEFT latent grids at their native resolutions (no resize).
-      self._fixed_latents = self._extract_latent_grids_from_params(
-          left_params, input_res=left_shape[:-1]
-      )
+      # Loop over specified rd_weights
+      for rdw in RD_WEIGHTS:
+        rd_dir = iter_root / str(rdw)
 
-      # 2) Train RIGHT with fixed-latent conditioning
-      inputs = right_np
-      input_shape = inputs.shape
-      num_pixels = self._num_pixels(input_res=input_shape[:-1])
-      logging.info('inputs shape: %s', input_shape)
-      logging.info('num_pixels: %s', num_pixels)
+        # -------- Baseline: train RIGHT without side info --------
+        if hasattr(self, "_fixed_latents"):
+          delattr(self, "_fixed_latents")  # ensure no conditioning
+        params_baseline = self._train_right_with_rd(right_np, rng, rd_weight=rdw)
+        baseline_dir = rd_dir / "baseline"
+        m_base = self._eval_and_save(params_baseline, right_np, baseline_dir)
 
-      # Compute MACs per pixel.
-      macs_per_pixel = self._count_macs_per_pixel(input_shape)
-
-      # Fit inputs of shape [H, W, C].
-      params = self.fit_datum(inputs, rng)
-
-
-      
-      if hasattr(self, "_fixed_latents"):
-        delattr(self, "_fixed_latents")
-      # Evaluate unquantized model after training. Note that this will *not*
-      # include model parameters in rate calculations.
-      metrics = self.eval(params, inputs, blocked_rates=True)
-
-      # Perform search over quantization steps to find best quantized model
-      # params (in terms of rate-distortion loss).
-      logging.info('Started quantization step search.')
-      _, quantized_metrics = self.quantization_step_search(
-          params, inputs
-      )
-      logging.info('Finished quantization step search.')
-
-      # Save metrics
-      # Reconstruction metrics
-      keys = ['psnr', 'loss', 'distortion', 'ssim']
-      for key in keys:
-        metrics_per_datum[key].append(metrics[key])
-        metrics_per_datum[f'{key}_quantized'].append(quantized_metrics[key])
-      # Rate metrics
-      metrics_per_datum['rate_latents'].append(metrics['rate'])
-      metrics_per_datum['bpp_latents'].append(metrics['rate'] / num_pixels)
-      metrics_per_datum['rate_latents_quantized'].append(
-          quantized_metrics['rate']
-      )
-      metrics_per_datum['bpp_latents_quantized'].append(
-          quantized_metrics['rate'] / num_pixels
-      )
-      for key in ['synthesis', 'entropy']:
-        metrics_per_datum[f'rate_{key}'].append(quantized_metrics[key])
-        metrics_per_datum[f'bpp_{key}'].append(
-            quantized_metrics[key] / num_pixels
+        # -------- Stereo: train LEFT, extract latents, then RIGHT with fixed latents --------
+        # Train left
+        left_params = self._train_right_with_rd(left_np, rng, rd_weight=rdw)
+        # Extract left latent grids at native scales
+        self._fixed_latents = self._extract_latent_grids_from_params(
+            left_params, input_res=left_np.shape[:-1]
         )
-      metrics_per_datum['rate_total'].append(
-          quantized_metrics['rate']
-          + quantized_metrics['synthesis']
-          + quantized_metrics['entropy']
-      )
-      metrics_per_datum['bpp_total'].append(
-          metrics_per_datum['rate_total'][-1] / num_pixels
-      )
-      metrics_per_datum['q_step_weight'].append(
-          quantized_metrics['q_step_weight']
-      )
-      metrics_per_datum['q_step_bias'].append(quantized_metrics['q_step_bias'])
+        # Train right with fixed latents
+        params_stereo = self._train_right_with_rd(right_np, rng, rd_weight=rdw)
+        stereo_dir = rd_dir / "stereo"
+        m_stereo = self._eval_and_save(params_stereo, right_np, stereo_dir)
 
-      # Add macs per pixel metrics
-      for key, val in macs_per_pixel.items():
-        metrics_per_datum[f'macs_per_pixel_{key}'].append(val)
+        # Record metrics for this lambda
+        iter_metrics[str(rdw)] = {
+          "baseline": m_base,
+          "stereo": m_stereo,
+        }
 
-      # Log metrics for latest image
-      logging_message = f'Train datum {i:05}: ' + str(
-          {metric: vals[-1] for metric, vals in metrics_per_datum.items()}
-      )
-      logging_message = textwrap.fill(logging_message, 80)
-      logging.info(logging_message)
+        # Clean up to avoid leaking fixed latents to next lambda
+        if hasattr(self, "_fixed_latents"):
+          delattr(self, "_fixed_latents")
+
+      # Write per-iterator JSON file
+      with open(iter_root / "metrics.json", "w") as f:
+        json.dump(iter_metrics, f, indent=2)
+    # for i, input_dict in enumerate(self._train_data_iterator):
+    #   # Extract image as array of shape [H, W, C]
+    #   # inputs = input_dict['right'].numpy()
+    #   # 1) Train LEFT view first and extract its trained latent grids.
+    #   #    The loader provides both 'left' and 'right' entries.
+    #   left_np = input_dict['left'].numpy()
+    #   right_np = input_dict['right'].numpy()
+
+    #   # Train LEFT
+    #   left_shape = left_np.shape
+    #   _ = self._count_macs_per_pixel(left_shape)
+    #   left_params = self.fit_datum(left_np, rng)
+    #   # Extract LEFT latent grids at their native resolutions (no resize).
+    #   self._fixed_latents = self._extract_latent_grids_from_params(
+    #       left_params, input_res=left_shape[:-1]
+    #   )
+
+    #   # 2) Train RIGHT with fixed-latent conditioning
+    #   inputs = right_np
+    #   input_shape = inputs.shape
+    #   num_pixels = self._num_pixels(input_res=input_shape[:-1])
+    #   logging.info('inputs shape: %s', input_shape)
+    #   logging.info('num_pixels: %s', num_pixels)
+
+    #   # Compute MACs per pixel.
+    #   macs_per_pixel = self._count_macs_per_pixel(input_shape)
+
+    #   # Fit inputs of shape [H, W, C].
+    #   params = self.fit_datum(inputs, rng)
+
+
+
+    #   if hasattr(self, "_fixed_latents"):
+    #     delattr(self, "_fixed_latents")
+    #   # Evaluate unquantized model after training. Note that this will *not*
+    #   # include model parameters in rate calculations.
+    #   metrics = self.eval(params, inputs, blocked_rates=True)
+
+    #   # Perform search over quantization steps to find best quantized model
+    #   # params (in terms of rate-distortion loss).
+    #   logging.info('Started quantization step search.')
+    #   _, quantized_metrics = self.quantization_step_search(
+    #       params, inputs
+    #   )
+    #   logging.info('Finished quantization step search.')
+
+    #   # Save metrics
+    #   # Reconstruction metrics
+    #   keys = ['psnr', 'loss', 'distortion', 'ssim']
+    #   for key in keys:
+    #     metrics_per_datum[key].append(metrics[key])
+    #     metrics_per_datum[f'{key}_quantized'].append(quantized_metrics[key])
+    #   # Rate metrics
+    #   metrics_per_datum['rate_latents'].append(metrics['rate'])
+    #   metrics_per_datum['bpp_latents'].append(metrics['rate'] / num_pixels)
+    #   metrics_per_datum['rate_latents_quantized'].append(
+    #       quantized_metrics['rate']
+    #   )
+    #   metrics_per_datum['bpp_latents_quantized'].append(
+    #       quantized_metrics['rate'] / num_pixels
+    #   )
+    #   for key in ['synthesis', 'entropy']:
+    #     metrics_per_datum[f'rate_{key}'].append(quantized_metrics[key])
+    #     metrics_per_datum[f'bpp_{key}'].append(
+    #         quantized_metrics[key] / num_pixels
+    #     )
+    #   metrics_per_datum['rate_total'].append(
+    #       quantized_metrics['rate']
+    #       + quantized_metrics['synthesis']
+    #       + quantized_metrics['entropy']
+    #   )
+    #   metrics_per_datum['bpp_total'].append(
+    #       metrics_per_datum['rate_total'][-1] / num_pixels
+    #   )
+    #   metrics_per_datum['q_step_weight'].append(
+    #       quantized_metrics['q_step_weight']
+    #   )
+    #   metrics_per_datum['q_step_bias'].append(quantized_metrics['q_step_bias'])
+
+    #   # Add macs per pixel metrics
+    #   for key, val in macs_per_pixel.items():
+    #     metrics_per_datum[f'macs_per_pixel_{key}'].append(val)
+
+    #   # Log metrics for latest image
+    #   logging_message = f'Train datum {i:05}: ' + str(
+    #       {metric: vals[-1] for metric, vals in metrics_per_datum.items()}
+    #   )
+    #   logging_message = textwrap.fill(logging_message, 80)
+    #   logging.info(logging_message)
 
     # Compute mean metrics and log these.
     all_metrics = {
