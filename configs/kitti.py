@@ -133,7 +133,7 @@ def get_config() -> config_dict.ConfigDict:
 
   # Entropy model
   exp.model.entropy.layers = (18, 18)
-  exp.model.entropy.context_num_rows_cols = (3, 3)
+  exp.model.entropy.context_num_rows_cols = (7, 7)
   exp.model.entropy.activation_fn = 'gelu'
   exp.model.entropy.scale_range = (1e-3, 150)
   exp.model.entropy.shift_log_scale = 8.
@@ -142,12 +142,12 @@ def get_config() -> config_dict.ConfigDict:
   # Settings related to condition the network on the latent grid in some way. At
   # the moment only `use_prev_grid` is supported.
   exp.model.entropy.conditional_spec = config_dict.ConfigDict()
-  exp.model.entropy.conditional_spec.use_conditioning = False
+  exp.model.entropy.conditional_spec.use_conditioning = True
   # Whether to condition the entropy model on the previous grid. If this is
   # `True`, the parameter `conditional_spec.prev_kernel_shape` should be set.
   exp.model.entropy.conditional_spec.use_prev_grid = False
   exp.model.entropy.conditional_spec.interpolation = 'bilinear'
-  exp.model.entropy.conditional_spec.prev_kernel_shape = (3, 3)
+  exp.model.entropy.conditional_spec.prev_kernel_shape = (7, 7)
 
   # Upsampling model
   # Only valid option is 'image_resize'

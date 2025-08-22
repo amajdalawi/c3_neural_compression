@@ -77,6 +77,7 @@ class AutoregressiveEntropyModelConvImage(
       scale_range: tuple[float, float] | None = None,
       clip_like_cool_chic: bool = True,
       use_linear_w_init: bool = True,
+      fixed_latents: tuple[Array, ...] | None = None,
   ):
     """Constructor.
 
@@ -109,6 +110,8 @@ class AutoregressiveEntropyModelConvImage(
     self._conditional_spec = conditional_spec
     self._shift_log_scale = shift_log_scale
     self._use_linear_w_init = use_linear_w_init
+    self._fixed_latents = fixed_latents
+
 
     if isinstance(context_num_rows_cols, tuple):
       self.context_num_rows_cols = context_num_rows_cols
@@ -142,7 +145,8 @@ class AutoregressiveEntropyModelConvImage(
   ) -> tuple[Array, Callable[[Any, Any], Array] | None]:
     """Returns the mask and weight initialization of the first layer."""
     if self._conditional_spec.use_conditioning:
-      if self._conditional_spec.use_prev_grid:
+      if self._conditional_spec.use_prev_grid or (self._fixed_latents is not None):
+      # if self._conditional_spec.use_prev_grid:
         mask = layers_lib.get_prev_current_mask(
             kernel_shape=self.in_kernel_shape,
             prev_kernel_shape=self._conditional_spec.prev_kernel_shape,
@@ -150,7 +154,8 @@ class AutoregressiveEntropyModelConvImage(
         )
         w_init = None
       else:
-        raise ValueError('Only use_prev_grid conditioning supported.')
+        # raise ValueError('Only use_prev_grid conditioning supported.')
+        raise ValueError('Conditioning requested but neither prev_grid nor fixed_latents available.')
     else:
       mask = causal_mask(
           kernel_shape=self.in_kernel_shape, f_out=self._layers[0]
@@ -189,7 +194,16 @@ class AutoregressiveEntropyModelConvImage(
       bs = None
 
     if self._conditional_spec.use_conditioning:
-      if self._conditional_spec.use_prev_grid:
+      if self._fixed_latents is not None:
+        # Pair each fixed latent with its corresponding grid (same H×W).
+        dist_params = []
+        for fixed_grid, grid in zip(self._fixed_latents, latent_grids):
+          inputs = jnp.stack([fixed_grid, grid], axis=-1)  # (h[k], w[k], 2)
+          out = self.net(inputs)
+          dist_params.append(out)
+
+
+      elif self._conditional_spec.use_prev_grid:
         grids_cond = (jnp.zeros_like(latent_grids[0]),) + latent_grids[:-1]
         dist_params = []
         for prev_grid, grid in zip(grids_cond, latent_grids):
@@ -206,6 +220,8 @@ class AutoregressiveEntropyModelConvImage(
           dist_params.append(out)
       else:
         raise ValueError('use_prev_grid is False')
+        raise ValueError('Conditioning requested but neither prev_grid nor fixed_latents enabled.')
+
     else:
       # If not using conditioning, just apply the same network to each latent
       # grid. Each element of dist_params has shape (h[k], w[k], 2).

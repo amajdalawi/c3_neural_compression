@@ -64,16 +64,36 @@ class Experiment(base.Experiment):
     experiment_utils.log_params_info(params)
     return params, opt_state
 
+
+  def _extract_latent_grids_from_params(self, params: hk.Params, input_res: tuple[int, int]):
+    """Run a no-noise forward to fetch trained latent grids for a given input_res."""
+    # We use 'ste' (round) path here and no rng.
+    rec, latent_grids, *_ = self.forward.apply(
+      params=params,
+        rng=None,
+        quant_type='ste',
+        input_res=input_res,
+        soft_round_temp=None,
+        input_mean=None,
+        kumaraswamy_a=None,
+    )
+    # Ensure JAX arrays
+    return tuple(jnp.array(g) for g in latent_grids)
+
+
   def _get_upsampling_fn(self, input_res):
     num_dims = len(input_res)
     assert num_dims == 2
     return super()._get_upsampling_fn(input_res)
 
   def _get_entropy_model(self):
-    """Returns entropy model."""
+    # """Returns entropy model."""
+    # return entropy_models.AutoregressiveEntropyModelConvImage(
+    #     **self.config.model.entropy,
+    # )
+    # If fixed latents (from the LEFT image) are available, pass them in.
     return entropy_models.AutoregressiveEntropyModelConvImage(
-        **self.config.model.entropy,
-    )
+      **self.config.model.entropy,fixed_latents=getattr(self, "_fixed_latents", None),)
 
   def _get_entropy_params(self, latent_grids):
     """Returns parameters of autoregressive Laplace distribution."""
@@ -586,7 +606,23 @@ class Experiment(base.Experiment):
 
     for i, input_dict in enumerate(self._train_data_iterator):
       # Extract image as array of shape [H, W, C]
-      inputs = input_dict['array'].numpy()
+      # inputs = input_dict['right'].numpy()
+      +      # 1) Train LEFT view first and extract its trained latent grids.
+      #    The loader provides both 'left' and 'right' entries.
+      left_np = input_dict['left'].numpy()
+      right_np = input_dict['right'].numpy()
+
+      # Train LEFT
+      left_shape = left_np.shape
+      _ = self._count_macs_per_pixel(left_shape)
+      left_params = self.fit_datum(left_np, rng)
+      # Extract LEFT latent grids at their native resolutions (no resize).
+      self._fixed_latents = self._extract_latent_grids_from_params(
+          left_params, input_res=left_shape[:-1]
+      )
+
+      # 2) Train RIGHT with fixed-latent conditioning
+      inputs = right_np
       input_shape = inputs.shape
       num_pixels = self._num_pixels(input_res=input_shape[:-1])
       logging.info('inputs shape: %s', input_shape)
