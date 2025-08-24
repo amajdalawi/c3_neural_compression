@@ -142,10 +142,10 @@ def get_config() -> config_dict.ConfigDict:
   # Settings related to condition the network on the latent grid in some way. At
   # the moment only `use_prev_grid` is supported.
   exp.model.entropy.conditional_spec = config_dict.ConfigDict()
-  exp.model.entropy.conditional_spec.use_conditioning = False
+  exp.model.entropy.conditional_spec.use_conditioning = True
   # Whether to condition the entropy model on the previous grid. If this is
   # `True`, the parameter `conditional_spec.prev_kernel_shape` should be set.
-  exp.model.entropy.conditional_spec.use_prev_grid = False
+  exp.model.entropy.conditional_spec.use_prev_grid = True
   exp.model.entropy.conditional_spec.interpolation = 'bilinear'
   exp.model.entropy.conditional_spec.prev_kernel_shape = (3, 3)
 

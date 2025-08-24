@@ -34,6 +34,12 @@ from jaxline import platform
 import numpy as np
 import optax
 
+
+import json
+from PIL import Image
+from pathlib import Path
+
+
 from c3_neural_compression.experiments import base
 from c3_neural_compression.model import entropy_models
 from c3_neural_compression.utils import experiment as experiment_utils
@@ -43,7 +49,7 @@ from c3_neural_compression.utils import psnr as psnr_utils
 Array = chex.Array
 
 FLAGS = flags.FLAGS
-
+flags.DEFINE_string("save_root", None, "Root directory for saving results.")
 
 class Experiment(base.Experiment):
   """Per data-point compression experiment for images. Assume single-device."""
@@ -613,6 +619,7 @@ class Experiment(base.Experiment):
       right_np = input_dict['right'].numpy()
 
       # Train LEFT
+      jax.debug.print("Training left....")
       left_shape = left_np.shape
       _ = self._count_macs_per_pixel(left_shape)
       left_params = self.fit_datum(left_np, rng)
@@ -649,6 +656,65 @@ class Experiment(base.Experiment):
           params, inputs
       )
       logging.info('Finished quantization step search.')
+
+
+
+      # Extract the right image filename without extension
+      right_path = Path(input_dict['right_path'])
+      right_name = right_path.stem  # e.g., "myimage" from "myimage.png"
+      rd_weight = self.config.loss.rd_weight
+
+      # Build hierarchical save path: root / image_number / rd_weight
+      rd_str = f"{rd_weight:.0e}".replace("e-0", "e-").replace("e+0", "e+")  # nice sci notation
+      save_dir = Path(FLAGS.save_root) / right_name / rd_str
+      save_dir.mkdir(parents=True, exist_ok=True)
+      # final_path = Path()
+
+
+
+      # --- Save reconstructed RIGHT image ---
+      rec, _, _, _, _ = self.forward.apply(
+          params=params,
+          rng=None,
+          quant_type='ste',
+          input_res=inputs.shape[:-1]
+      )
+      rec_np = np.array(jnp.clip(rec * 255.0, 0, 255), dtype=np.uint8)
+
+      # Format rd_weight in scientific notation (e.g., 1e-2)
+      # rd_str = f"{rd_weight:.0e}"  # yields strings like '1e-02'
+      rd_str = rd_str.replace("e-0", "e-").replace("e+0", "e+")  # make it nicer
+
+
+      out_img_path = save_dir / f"reconstruction.png"
+      Image.fromarray(rec_np).save(out_img_path)
+      logging.info("Saved reconstructed image to %s", out_img_path)
+      # --- end image save ---
+
+
+        # --- Save requested metrics to JSON ---
+        # Total bits-per-pixel (latents + model params)
+      bpp_total = (
+          float(quantized_metrics['rate'])
+          + float(quantized_metrics['synthesis'])
+          + float(quantized_metrics['entropy'])
+      ) / float(num_pixels)
+
+      payload = {
+          "bpp": bpp_total,
+          "rate_entropy": float(quantized_metrics["entropy"]),
+          "rate_synthesis": float(quantized_metrics["synthesis"]),
+          "rate_latents": float(quantized_metrics["rate"]),
+          "psnr_quantized": float(quantized_metrics["psnr"]),
+          "ssim": float(quantized_metrics["ssim"]),
+          "rd_weight": float(rd_weight),  # added here
+      }
+
+      out_json_path = save_dir / f"metrics.json"
+      with out_json_path.open("w") as f:
+          json.dump(payload, f, indent=2)
+      logging.info("Saved metrics to %s", out_json_path)
+      # --- end JSON save ---
 
       # Save metrics
       # Reconstruction metrics
