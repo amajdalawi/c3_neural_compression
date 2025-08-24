@@ -624,29 +624,34 @@ class Experiment(base.Experiment):
     # Fit each image and log metrics pre/post model quantization per image.
     metrics_per_datum = collections.defaultdict(list)
     lambda_values = LAMBDA_VALUES if FLAGS.rd_weight is None else [FLAGS.rd_weight]
-    for rd_weight in lambda_values:
-      logging.info("Running training/eval with rd_weight = %.2e", rd_weight)
-      self.config.loss.rd_weight = rd_weight
-      for i, input_dict in enumerate(self._train_data_iterator):
+    for i, input_dict in enumerate(self._train_data_iterator):
+      jax.debug.print("NOW TRAINING {path}",path=input_dict["left_path"])
+      for rd_weight in lambda_values:
+        logging.info("Running training/eval with rd_weight = %.2e", rd_weight)
+        self.config.loss.rd_weight = rd_weight
+
+      # logging.info("Running training/eval with rd_weight = %.2e", rd_weight)
+      # self.config.loss.rd_weight = rd_weight
+      # for i, input_dict in enumerate(self._train_data_iterator):
         # Extract image as array of shape [H, W, C]
         # inputs = input_dict['right'].numpy()
-        # 1) Train LEFT view first and extract its trained latent grids.
-        #    The loader provides both 'left' and 'right' entries.
+        # The loader provides both 'left' and 'right' entries.
         left_np = input_dict['left'].numpy()
         right_np = input_dict['right'].numpy()
 
-        # Train LEFT
-        jax.debug.print("Training left....")
-        left_shape = left_np.shape
-        _ = self._count_macs_per_pixel(left_shape)
-        left_params = self.fit_datum(left_np, rng)
-        # Extract LEFT latent grids at their native resolutions (no resize).
+        # Train RIGHT
+        jax.debug.print("Training right....")
+        right_shape = right_np.shape
+        _ = self._count_macs_per_pixel(right_shape)
+        right_params = self.fit_datum(right_np, rng)
+        # Extract RIGHT latent grids at their native resolutions (no resize).
         self._fixed_latents = self._extract_latent_grids_from_params(
-            left_params, input_res=left_shape[:-1]
+            right_params, input_res=right_shape[:-1]
         )
 
-        # 2) Train RIGHT with fixed-latent conditioning
-        inputs = right_np
+        # 2) Train LEFT with fixed-latent conditioning
+        jax.debug.print("Training left with added latents...")
+        inputs = left_np
         input_shape = inputs.shape
         num_pixels = self._num_pixels(input_res=input_shape[:-1])
         logging.info('inputs shape: %s', input_shape)
@@ -677,9 +682,9 @@ class Experiment(base.Experiment):
 
 
         # Extract the right image filename without extension
-        right_path = Path(input_dict['right_path'])
+        right_path = Path(input_dict['left_path'])
         right_name = right_path.stem  # e.g., "myimage" from "myimage.png"
-        rd_weight = self.config.loss.rd_weight
+        # rd_weight = self.config.loss.rd_weight
 
         # Build hierarchical save path: root / image_number / rd_weight
         rd_str = f"{rd_weight:.0e}".replace("e-0", "e-").replace("e+0", "e+")  # nice sci notation

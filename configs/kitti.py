@@ -30,8 +30,8 @@ def get_config() -> config_dict.ConfigDict:
   exp.dataset.name = 'kitti'
   # Make sure root_dir matches the directory where data files are stored.
   exp.dataset.root_dir = r'./c3_neural_compression/kitti/'
-  exp.dataset.skip_examples = 1
-  exp.dataset.num_examples = 1  # Set this to None to train on whole dataset.
+  exp.dataset.skip_examples = 6
+  exp.dataset.num_examples = None  # Set this to None to train on whole dataset.
   exp.dataset.num_frames = None
   exp.dataset.spatial_patch_size = None
   exp.dataset.video_idx = None
