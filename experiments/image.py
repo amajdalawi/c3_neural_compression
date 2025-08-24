@@ -47,9 +47,21 @@ from c3_neural_compression.utils import psnr as psnr_utils
 
 
 Array = chex.Array
+LAMBDA_VALUES = [
+    0.1,
+    0.05,
+    0.01,
+    0.005,
+    0.003,
+    0.007,
+    0.001,
+    0.0006,
+    0.0003,
+]
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("save_root", None, "Root directory for saving results.")
+flags.DEFINE_float("rd_weight", None, "Defines the rate distrotion weight (lambda)")
 
 class Experiment(base.Experiment):
   """Per data-point compression experiment for images. Assume single-device."""
@@ -606,159 +618,164 @@ class Experiment(base.Experiment):
     # rng has shape [num_devices, 2].
     # We only use single-device so just use the first device's rng.
     rng = rng[0]  # [2]
+    if FLAGS.rd_weight is not None:
+      self.config.loss.rd_weight = FLAGS.rd_weight
 
     # Fit each image and log metrics pre/post model quantization per image.
     metrics_per_datum = collections.defaultdict(list)
+    lambda_values = LAMBDA_VALUES if FLAGS.rd_weight is None else [FLAGS.rd_weight]
+    for rd_weight in lambda_values:
+      logging.info("Running training/eval with rd_weight = %.2e", rd_weight)
+      self.config.loss.rd_weight = rd_weight
+      for i, input_dict in enumerate(self._train_data_iterator):
+        # Extract image as array of shape [H, W, C]
+        # inputs = input_dict['right'].numpy()
+        # 1) Train LEFT view first and extract its trained latent grids.
+        #    The loader provides both 'left' and 'right' entries.
+        left_np = input_dict['left'].numpy()
+        right_np = input_dict['right'].numpy()
 
-    for i, input_dict in enumerate(self._train_data_iterator):
-      # Extract image as array of shape [H, W, C]
-      # inputs = input_dict['right'].numpy()
-      # 1) Train LEFT view first and extract its trained latent grids.
-      #    The loader provides both 'left' and 'right' entries.
-      left_np = input_dict['left'].numpy()
-      right_np = input_dict['right'].numpy()
-
-      # Train LEFT
-      jax.debug.print("Training left....")
-      left_shape = left_np.shape
-      _ = self._count_macs_per_pixel(left_shape)
-      left_params = self.fit_datum(left_np, rng)
-      # Extract LEFT latent grids at their native resolutions (no resize).
-      self._fixed_latents = self._extract_latent_grids_from_params(
-          left_params, input_res=left_shape[:-1]
-      )
-
-      # 2) Train RIGHT with fixed-latent conditioning
-      inputs = right_np
-      input_shape = inputs.shape
-      num_pixels = self._num_pixels(input_res=input_shape[:-1])
-      logging.info('inputs shape: %s', input_shape)
-      logging.info('num_pixels: %s', num_pixels)
-
-      # Compute MACs per pixel.
-      macs_per_pixel = self._count_macs_per_pixel(input_shape)
-
-      # Fit inputs of shape [H, W, C].
-      params = self.fit_datum(inputs, rng)
-
-
-      
-      if hasattr(self, "_fixed_latents"):
-        delattr(self, "_fixed_latents")
-      # Evaluate unquantized model after training. Note that this will *not*
-      # include model parameters in rate calculations.
-      metrics = self.eval(params, inputs, blocked_rates=True)
-
-      # Perform search over quantization steps to find best quantized model
-      # params (in terms of rate-distortion loss).
-      logging.info('Started quantization step search.')
-      _, quantized_metrics = self.quantization_step_search(
-          params, inputs
-      )
-      logging.info('Finished quantization step search.')
-
-
-
-      # Extract the right image filename without extension
-      right_path = Path(input_dict['right_path'])
-      right_name = right_path.stem  # e.g., "myimage" from "myimage.png"
-      rd_weight = self.config.loss.rd_weight
-
-      # Build hierarchical save path: root / image_number / rd_weight
-      rd_str = f"{rd_weight:.0e}".replace("e-0", "e-").replace("e+0", "e+")  # nice sci notation
-      save_dir = Path(FLAGS.save_root) / right_name / rd_str
-      save_dir.mkdir(parents=True, exist_ok=True)
-      # final_path = Path()
-
-
-
-      # --- Save reconstructed RIGHT image ---
-      rec, _, _, _, _ = self.forward.apply(
-          params=params,
-          rng=None,
-          quant_type='ste',
-          input_res=inputs.shape[:-1]
-      )
-      rec_np = np.array(jnp.clip(rec * 255.0, 0, 255), dtype=np.uint8)
-
-      # Format rd_weight in scientific notation (e.g., 1e-2)
-      # rd_str = f"{rd_weight:.0e}"  # yields strings like '1e-02'
-      rd_str = rd_str.replace("e-0", "e-").replace("e+0", "e+")  # make it nicer
-
-
-      out_img_path = save_dir / f"reconstruction.png"
-      Image.fromarray(rec_np).save(out_img_path)
-      logging.info("Saved reconstructed image to %s", out_img_path)
-      # --- end image save ---
-
-
-        # --- Save requested metrics to JSON ---
-        # Total bits-per-pixel (latents + model params)
-      bpp_total = (
-          float(quantized_metrics['rate'])
-          + float(quantized_metrics['synthesis'])
-          + float(quantized_metrics['entropy'])
-      ) / float(num_pixels)
-
-      payload = {
-          "bpp": bpp_total,
-          "rate_entropy": float(quantized_metrics["entropy"]),
-          "rate_synthesis": float(quantized_metrics["synthesis"]),
-          "rate_latents": float(quantized_metrics["rate"]),
-          "psnr_quantized": float(quantized_metrics["psnr"]),
-          "ssim": float(quantized_metrics["ssim"]),
-          "rd_weight": float(rd_weight),  # added here
-      }
-
-      out_json_path = save_dir / f"metrics.json"
-      with out_json_path.open("w") as f:
-          json.dump(payload, f, indent=2)
-      logging.info("Saved metrics to %s", out_json_path)
-      # --- end JSON save ---
-
-      # Save metrics
-      # Reconstruction metrics
-      keys = ['psnr', 'loss', 'distortion', 'ssim']
-      for key in keys:
-        metrics_per_datum[key].append(metrics[key])
-        metrics_per_datum[f'{key}_quantized'].append(quantized_metrics[key])
-      # Rate metrics
-      metrics_per_datum['rate_latents'].append(metrics['rate'])
-      metrics_per_datum['bpp_latents'].append(metrics['rate'] / num_pixels)
-      metrics_per_datum['rate_latents_quantized'].append(
-          quantized_metrics['rate']
-      )
-      metrics_per_datum['bpp_latents_quantized'].append(
-          quantized_metrics['rate'] / num_pixels
-      )
-      for key in ['synthesis', 'entropy']:
-        metrics_per_datum[f'rate_{key}'].append(quantized_metrics[key])
-        metrics_per_datum[f'bpp_{key}'].append(
-            quantized_metrics[key] / num_pixels
+        # Train LEFT
+        jax.debug.print("Training left....")
+        left_shape = left_np.shape
+        _ = self._count_macs_per_pixel(left_shape)
+        left_params = self.fit_datum(left_np, rng)
+        # Extract LEFT latent grids at their native resolutions (no resize).
+        self._fixed_latents = self._extract_latent_grids_from_params(
+            left_params, input_res=left_shape[:-1]
         )
-      metrics_per_datum['rate_total'].append(
-          quantized_metrics['rate']
-          + quantized_metrics['synthesis']
-          + quantized_metrics['entropy']
-      )
-      metrics_per_datum['bpp_total'].append(
-          metrics_per_datum['rate_total'][-1] / num_pixels
-      )
-      metrics_per_datum['q_step_weight'].append(
-          quantized_metrics['q_step_weight']
-      )
-      metrics_per_datum['q_step_bias'].append(quantized_metrics['q_step_bias'])
 
-      # Add macs per pixel metrics
-      for key, val in macs_per_pixel.items():
-        metrics_per_datum[f'macs_per_pixel_{key}'].append(val)
+        # 2) Train RIGHT with fixed-latent conditioning
+        inputs = right_np
+        input_shape = inputs.shape
+        num_pixels = self._num_pixels(input_res=input_shape[:-1])
+        logging.info('inputs shape: %s', input_shape)
+        logging.info('num_pixels: %s', num_pixels)
 
-      # Log metrics for latest image
-      logging_message = f'Train datum {i:05}: ' + str(
-          {metric: vals[-1] for metric, vals in metrics_per_datum.items()}
-      )
-      logging_message = textwrap.fill(logging_message, 80)
-      logging.info(logging_message)
+        # Compute MACs per pixel.
+        macs_per_pixel = self._count_macs_per_pixel(input_shape)
+
+        # Fit inputs of shape [H, W, C].
+        params = self.fit_datum(inputs, rng)
+
+
+        
+        if hasattr(self, "_fixed_latents"):
+          delattr(self, "_fixed_latents")
+        # Evaluate unquantized model after training. Note that this will *not*
+        # include model parameters in rate calculations.
+        metrics = self.eval(params, inputs, blocked_rates=True)
+
+        # Perform search over quantization steps to find best quantized model
+        # params (in terms of rate-distortion loss).
+        logging.info('Started quantization step search.')
+        _, quantized_metrics = self.quantization_step_search(
+            params, inputs
+        )
+        logging.info('Finished quantization step search.')
+
+
+
+        # Extract the right image filename without extension
+        right_path = Path(input_dict['right_path'])
+        right_name = right_path.stem  # e.g., "myimage" from "myimage.png"
+        rd_weight = self.config.loss.rd_weight
+
+        # Build hierarchical save path: root / image_number / rd_weight
+        rd_str = f"{rd_weight:.0e}".replace("e-0", "e-").replace("e+0", "e+")  # nice sci notation
+        save_dir = Path(FLAGS.save_root) / right_name / rd_str
+        save_dir.mkdir(parents=True, exist_ok=True)
+        # final_path = Path()
+
+
+
+        # --- Save reconstructed RIGHT image ---
+        rec, _, _, _, _ = self.forward.apply(
+            params=params,
+            rng=None,
+            quant_type='ste',
+            input_res=inputs.shape[:-1]
+        )
+        rec_np = np.array(jnp.clip(rec * 255.0, 0, 255), dtype=np.uint8)
+
+        # Format rd_weight in scientific notation (e.g., 1e-2)
+        # rd_str = f"{rd_weight:.0e}"  # yields strings like '1e-02'
+        rd_str = rd_str.replace("e-0", "e-").replace("e+0", "e+")  # make it nicer
+
+
+        out_img_path = save_dir / f"reconstruction.png"
+        Image.fromarray(rec_np).save(out_img_path)
+        logging.info("Saved reconstructed image to %s", out_img_path)
+        # --- end image save ---
+
+
+          # --- Save requested metrics to JSON ---
+          # Total bits-per-pixel (latents + model params)
+        bpp_total = (
+            float(quantized_metrics['rate'])
+            + float(quantized_metrics['synthesis'])
+            + float(quantized_metrics['entropy'])
+        ) / float(num_pixels)
+
+        payload = {
+            "bpp": bpp_total,
+            "rate_entropy": float(quantized_metrics["entropy"]),
+            "rate_synthesis": float(quantized_metrics["synthesis"]),
+            "rate_latents": float(quantized_metrics["rate"]),
+            "psnr_quantized": float(quantized_metrics["psnr"]),
+            "ssim": float(quantized_metrics["ssim"]),
+            "rd_weight": float(rd_weight),  # added here
+        }
+
+        out_json_path = save_dir / f"metrics.json"
+        with out_json_path.open("w") as f:
+            json.dump(payload, f, indent=2)
+        logging.info("Saved metrics to %s", out_json_path)
+        # --- end JSON save ---
+
+        # Save metrics
+        # Reconstruction metrics
+        keys = ['psnr', 'loss', 'distortion', 'ssim']
+        for key in keys:
+          metrics_per_datum[key].append(metrics[key])
+          metrics_per_datum[f'{key}_quantized'].append(quantized_metrics[key])
+        # Rate metrics
+        metrics_per_datum['rate_latents'].append(metrics['rate'])
+        metrics_per_datum['bpp_latents'].append(metrics['rate'] / num_pixels)
+        metrics_per_datum['rate_latents_quantized'].append(
+            quantized_metrics['rate']
+        )
+        metrics_per_datum['bpp_latents_quantized'].append(
+            quantized_metrics['rate'] / num_pixels
+        )
+        for key in ['synthesis', 'entropy']:
+          metrics_per_datum[f'rate_{key}'].append(quantized_metrics[key])
+          metrics_per_datum[f'bpp_{key}'].append(
+              quantized_metrics[key] / num_pixels
+          )
+        metrics_per_datum['rate_total'].append(
+            quantized_metrics['rate']
+            + quantized_metrics['synthesis']
+            + quantized_metrics['entropy']
+        )
+        metrics_per_datum['bpp_total'].append(
+            metrics_per_datum['rate_total'][-1] / num_pixels
+        )
+        metrics_per_datum['q_step_weight'].append(
+            quantized_metrics['q_step_weight']
+        )
+        metrics_per_datum['q_step_bias'].append(quantized_metrics['q_step_bias'])
+
+        # Add macs per pixel metrics
+        for key, val in macs_per_pixel.items():
+          metrics_per_datum[f'macs_per_pixel_{key}'].append(val)
+
+        # Log metrics for latest image
+        logging_message = f'Train datum {i:05}: ' + str(
+            {metric: vals[-1] for metric, vals in metrics_per_datum.items()}
+        )
+        logging_message = textwrap.fill(logging_message, 80)
+        logging.info(logging_message)
 
     # Compute mean metrics and log these.
     all_metrics = {
